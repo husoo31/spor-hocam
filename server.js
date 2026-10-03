@@ -484,6 +484,52 @@ function lookupLimit(userId, perTenMin) {
   if (e.n > perTenMin) throw new HttpError(429, 'rate_limited', 'Çok sık arama yapıldı, birkaç dakika sonra tekrar dene.');
 }
 const STOP = new Set(['the', 'and', 'with', 'without', 'of', 'in', 'a']);
+/* ------------------------------------------------------------------ sistem durumu
+   Giriş yapmış kullanıcı, dış servislerin açık olup olmadığını ve cevap sürelerini (ms) görür.
+   Hafif "okuma" istekleri kullanılır (yapay zekâ üretim kotası harcanmaz); sonuç 20 sn önbelleğe alınır. */
+const STATUS_TTL = 20000;
+let statusCache = { at: 0, data: null }, statusRun = null;
+async function probe(id, name, check) {
+  const t0 = performance.now();
+  const done = (state, detail) => ({ id, name, state, ms: Math.round(performance.now() - t0), detail });
+  try {
+    const r = await check();
+    if (r.off) return { id, name, state: 'off', ms: null, detail: r.off };
+    return done(r.ok ? 'ok' : 'down', r.detail || '');
+  } catch (e) {
+    return done('down', e && e.name === 'TimeoutError' ? 'zaman aşımı (8 sn)' : 'bağlanılamadı');
+  }
+}
+const httpOk = async (url, headers) => {
+  const r = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+  try { await r.arrayBuffer(); } catch (e) { /* gövde önemsiz */ }
+  return { ok: r.ok, detail: r.ok ? 'çalışıyor' : `HTTP ${r.status}` };
+};
+async function runStatus() {
+  const items = await Promise.all([
+    probe('db', 'Sunucu ve veritabanı', async () => { db.prepare('SELECT 1').get(); return { ok: true, detail: 'çalışıyor' }; }),
+    probe('gemini', 'Gemini (yapay zekâ)', async () => !env.GEMINI_API_KEY ? { off: 'anahtar tanımlı değil' }
+      : httpOk(`${GEMINI_BASE}/models?pageSize=1`, { 'x-goog-api-key': env.GEMINI_API_KEY })),
+    probe('openrouter', 'OpenRouter (yedek yapay zekâ)', async () => !env.OPENROUTER_API_KEY ? { off: 'anahtar tanımlı değil' }
+      : httpOk(`${OPENROUTER_BASE}/key`, { Authorization: `Bearer ${env.OPENROUTER_API_KEY}` })),
+    probe('nvidia', 'NVIDIA DeepSeek (son yedek)', async () => !env.NVIDIA_API_KEY ? { off: 'anahtar tanımlı değil' }
+      : httpOk(`${NVIDIA_BASE}/models`, { Authorization: `Bearer ${env.NVIDIA_API_KEY}` })),
+    probe('usda', 'USDA (besin veritabanı)', async () => !ref.usdaEnabled() ? { off: 'anahtar tanımlı değil' }
+      : httpOk(`${(env.USDA_BASE || 'https://api.nal.usda.gov/fdc/v1').replace(/\/$/, '')}/foods/search?query=egg&pageSize=1&api_key=${encodeURIComponent(env.USDA_API_KEY)}`, {})),
+    probe('off', 'Open Food Facts (barkod)', async () => httpOk(`${(env.OFF_BASE || 'https://world.openfoodfacts.org').replace(/\/$/, '')}/api/v2/product/5449000000996.json?fields=code`,
+      { 'User-Agent': `SporHocam/1.0 (${env.OFF_CONTACT || 'kisisel-kullanim'})`, Accept: 'application/json' })),
+  ]);
+  const ai = items.filter(i => ['gemini', 'openrouter', 'nvidia'].includes(i.id));
+  const aiOk = ai.some(i => i.state === 'ok');
+  const anyDown = items.some(i => i.state === 'down');
+  return { at: Date.now(), items, summary: !aiOk && ai.some(i => i.state !== 'off') ? 'down' : anyDown ? 'warn' : 'ok' };
+}
+async function handleStatus(req, res) {
+  if (statusCache.data && Date.now() - statusCache.at < STATUS_TTL) return send(res, 200, { ...statusCache.data, cached: true });
+  if (!statusRun) statusRun = runStatus().then(d => { statusCache = { at: Date.now(), data: d }; return d; }).finally(() => { statusRun = null; });
+  return send(res, 200, await statusRun);
+}
+
 async function handleLookup(req, res, user) {
   const body = await readBody(req, 200000);
   const items = Array.isArray(body.items) ? body.items.slice(0, 8) : [];
@@ -787,6 +833,7 @@ async function handleApi(req, res, url) {
     return send(res, 200, { log: rows });
   }
 
+  if (p === '/api/status' && m === 'GET') return handleStatus(req, res);
   if (p === '/api/lookup' && m === 'POST') return handleLookup(req, res, user);
   const bm = p.match(/^\/api\/barcode\/(\d{8,14})$/);
   if (bm && m === 'GET') {

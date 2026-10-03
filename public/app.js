@@ -74,7 +74,7 @@ const scaleN=(n,k)=>{const o={};Object.keys(n).forEach(key=>{const v=n[key]*k;if
 const defaultS=()=>({profile:{sex:'m',age:'',height:'',weight:'',act:'1.55',goal:'cut'},goals:{kcal:0,protein:0,carbs:0,fat:0,tdee:0,bmr:0,water:0},supps:[],lib:[],prefs:{precise:true},programs:[],active:null,months:{}});
 let S=defaultS();
 const hr=new Date().getHours();
-let V={tab:'today',date:TODAY,food:'',mealType:hr<11?'Kahvaltı':hr<16?'Öğle':hr<21?'Akşam':'Atıştırmalık',preview:null,pnotes:[],busy:false,busyMsg:'',err:'',edit:null,undo:null,
+let V={sys:{open:false,busy:false,data:null,err:''},tab:'today',date:TODAY,food:'',mealType:hr<11?'Kahvaltı':hr<16?'Öğle':hr<21?'Akşam':'Atıştırmalık',preview:null,pnotes:[],busy:false,busyMsg:'',err:'',edit:null,undo:null,
   fimgs:[],simgs:[],cap:null,og:{0:true},
   coach:'',coachBusy:false,range:14,
   stext:'',sbusy:false,serr:'',spreview:null,snotes:[],sedit:null,sf:{},hm:'',hmore:false,save:'',saveAt:'',
@@ -1248,12 +1248,33 @@ function viewForce(){
 }
 
 /* ---------- ana render ---------- */
+/* ---------- sistem durumu ---------- */
+const SYS_COL={ok:'var(--fat)',warn:'var(--carb)',down:'var(--bad)',off:'var(--mut)'};
+function sysDot(){
+  const d=V.sys.data,col=d?(SYS_COL[d.summary]||SYS_COL.off):'var(--mut)';
+  return `<button class="sysdot" data-a="sys" aria-label="Sistem durumu" aria-expanded="${V.sys.open}"><i style="background:${col}"></i>${V.sys.busy&&!d?'…':'Sistem'}</button>`;
+}
+function sysPanel(){
+  const d=V.sys.data,lab={ok:'aktif',down:'çalışmıyor',off:'kapalı'};
+  return `<div class="card syspanel" role="region" aria-label="Sistem durumu"><div class="row between"><h3>Sistem durumu</h3><button class="ghost" data-a="sys" aria-label="Kapat">✕</button></div>
+  ${V.sys.err?`<p class="small" style="color:var(--bad)">${esc(V.sys.err)}</p>`:''}
+  ${d?d.items.map(i=>`<div class="srow"><i style="background:${SYS_COL[i.state]||SYS_COL.off}"></i><div class="grow"><div>${esc(i.name)}</div><div class="mut small">${lab[i.state]||i.state}${i.detail&&i.state!=='ok'?' · '+esc(i.detail):''}</div></div><span class="ms">${i.ms===null?'—':i.ms+' ms'}</span></div>`).join(''):`<p class="mut small">${V.sys.busy?'Kontrol ediliyor…':'Henüz kontrol edilmedi.'}</p>`}
+  <div class="row between" style="margin-top:10px"><span class="mut small">${d?'Son kontrol '+pad(new Date(d.at).getHours())+':'+pad(new Date(d.at).getMinutes())+':'+pad(new Date(d.at).getSeconds()):''}</span><button class="btn alt sm" data-a="sysrefresh" ${V.sys.busy?'disabled':''}>${V.sys.busy?'…':'Yenile'}</button></div>
+  <p class="note" style="margin:8px 0 0">Süreler bu sunucudan ölçülür; yapay zekâ kotası harcanmaz. "Aktif" servisin cevap verdiğini gösterir, modelin kotasının dolmadığını garanti etmez.</p></div>`;
+}
+async function loadSys(force){
+  if(V.sys.busy)return;
+  if(!force&&V.sys.data&&Date.now()-V.sys.data.at<20000)return;
+  V.sys.busy=true;V.sys.err='';render();
+  try{V.sys.data=await api('/status')}catch(e){V.sys.err=errMsg(e)}
+  V.sys.busy=false;render();
+}
 function render(){
   const app=document.getElementById('app');
   if(!AUTH.cur||AUTH.cur.mustChange){app.innerHTML=viewAuth();return}
   const views={today:viewToday,supp:viewSupp,hist:viewHistory,stats:viewStats,settings:viewSettings};
   const tabs=[['today','🍽','Bugün'],['supp','💊','Takviye'],['hist','🗓','Geçmiş'],['stats','📈','Analiz'],['settings','⚙️','Ayarlar']];
-  app.innerHTML=`<div class="svw"><span class="small mut">👤 ${esc(S.profile.name||AUTH.cur.username)}</span><div class="sv" id="sv">${statusHtml()}</div></div>`+(views[V.tab]||viewToday)()+`<nav class="tabs" aria-label="Sekmeler"><div>${tabs.map(([k,i,t])=>`<button data-a="tab" data-t="${k}" class="${V.tab===k?'on':''}" ${V.tab===k?'aria-current="page"':''}><span>${i}</span>${t}</button>`).join('')}</div></nav>`;
+  app.innerHTML=`<div class="svw"><span class="small mut">👤 ${esc(S.profile.name||AUTH.cur.username)}</span><div class="row" style="gap:8px;margin:0"><div class="sv" id="sv">${statusHtml()}</div>${sysDot()}</div></div>`+(V.sys.open?sysPanel():'')+(views[V.tab]||viewToday)()+`<nav class="tabs" aria-label="Sekmeler"><div>${tabs.map(([k,i,t])=>`<button data-a="tab" data-t="${k}" class="${V.tab===k?'on':''}" ${V.tab===k?'aria-current="page"':''}><span>${i}</span>${t}</button>`).join('')}</div></nav>`;
   document.querySelectorAll('.seg button.on').forEach(b=>{try{b.scrollIntoView({block:'nearest',inline:'center'})}catch(e){}});
 }
 
@@ -1301,6 +1322,8 @@ const A={
   day(ds){const n=addDays(V.date,+ds.n);if(n>TODAY)return;V.date=n;V.preview=null;V.err='';V.edit=null;V.undo=null;render()},
   open(ds){V.date=ds.d;V.tab='today';V.preview=null;V.edit=null;V.undo=null;window.scrollTo(0,0);render()},
   hmore(){V.hmore=true;render()},
+  sys(){V.sys.open=!V.sys.open;render();if(V.sys.open)loadSys(false)}, // önce paneli çiz, veri bayatsa arkadan yenile
+  sysrefresh(){loadSys(true)},
   range(ds){V.range=+ds.n;render()},
   gtog(ds){V.og[ds.g]=!V.og[ds.g];render()},
   prec(){S.prefs.precise=!S.prefs.precise;persist('core');render()},
@@ -1597,7 +1620,7 @@ async function boot(){
   }
   AUTH.config=me.config||AUTH.config;V.cap=AUTH.config;
   if(me.user&&me.user.mustChange){AUTH.cur=me.user;V.am='force';render();return}
-  if(me.user){await enterApp(me.user);render();return}
+  if(me.user){await enterApp(me.user);render();setTimeout(()=>loadSys(false),1200);return} // noktanın rengi için bir kez arka planda kontrol
   V.am=AUTH.config.hasUsers?'login':'register';
   render();
 }
