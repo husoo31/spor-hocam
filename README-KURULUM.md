@@ -67,7 +67,10 @@ Yemek hesaplaması üç katmanlı çalışır; yapay zekâ değerleri uydurmak y
    - Bulunan aday, yapay zekâ tahminiyle **karşılaştırılır**. Kalori farkı ≤ %25 ve makro farkı makulse kabul edilir ("📚 USDA: …" satırı görünür). Uyuşmazsa **kabul edilmez**, yalnızca öneri olarak sunulur; hangisinin doğru olduğunu sen seçersin. Böylece yanlış eşleşme (örn. "pirinç" → "pirinç unu") sessizce değerleri bozmaz.
 3. **Denetim adımı yalnızca referansla doğrulanamayan kalemlere** uygulanır (Türk yemekleri, bulunamayanlar). Hepsi doğrulandıysa ikinci yapay zekâ çağrısı hiç yapılmaz; hem maliyet hem hata düşer.
 
-**Barkod:** Bugün sekmesinde "▥ Barkod" ile numara yazılır ya da (Chrome/Android'de) kamerayla taranır; yapay zekâ gerekmez. iPhone Safari kamerayla barkod okumayı desteklemez, orada numarayı elle yaz.
+**Barkod ve kamera:**
+- **Barkod tarama her cihazda çalışır.** Tarayıcının yerleşik okuyucusu (Chrome/Android) varsa o, yoksa uygulamayla gelen ZXing okuyucusu (bilgisayar, iPhone Safari dahil) kullanılır. Kontrol hanesi geçmeyen (yanlış okunmuş) barkod reddedilir ve aynı kod üst üste iki okumada görülmeden kabul edilmez. Canlı tarama zorlaşırsa "Fotoğraftan oku" ile barkodun fotoğrafı seçilebilir; numara elle de yazılabilir.
+- **Kamerayla fotoğraf:** Bugün sekmesinde "🍽 Yemek fotoğrafı" ve "🏷 Etiket fotoğrafı" düğmeleri uygulama içi kamerayı açar (deklanşör + galeriden seçme).
+- **Yemek fotoğrafı** yapay zekâya porsiyonu tabak/çatal/bardak gibi referans nesnelerle ölçtürür; gram tahmini bir aralıkla ("140–230 g") ve "fotoğraftan tahmin" uyarısıyla gösterilir, güven en fazla "orta" olur. Miktarı tartıyla düzelttiğinde değerler güncellenir. Görüntülü yemek işleri "complex" model zincirini (`AI_CHAIN_COMPLEX`) kullanır; USDA/Open Food Facts doğrulaması yemek fotoğrafında da çalışır. **Etiket fotoğrafında** değerler etikettten okunur, referans araması yapılmaz.
 
 Sınırlar: USDA'da Türk yemekleri yoktur, onlar yapay zekâ tahmini + senin "Ürünlerim" kayıtlarınla gelir. Open Food Facts topluluk verisidir; eksik ya da hatalı kayıt olabilir, bu yüzden önizlemede "etiketle karşılaştır" uyarısı çıkar. Referanstan gelen kalemlerde kaynakta olmayan vitamin/mineral sayısı gösterilir; o değerler toplamlara dahil edilmez (tahmin yürütülmez). Aramalar sunucuda 30 gün önbelleğe alınır; Open Food Facts'in dakikadaki istek sınırına uyulur.
 

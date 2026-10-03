@@ -450,10 +450,10 @@ async function shrink(file){
 }
 const imgMax=()=>(V.cap&&V.cap.images&&V.cap.images.maxCount)||0;
 const imgAccept=()=>(V.cap&&V.cap.images&&V.cap.images.mediaTypes&&V.cap.images.mediaTypes.join(','))||'image/*';
-async function addImgs(listKey,files){
+async function addImgs(listKey,files,kind){
   const list=V[listKey],room=Math.max(0,Math.min(4,imgMax())-list.length);
   for(const f of Array.from(files).slice(0,room)){
-    try{const b=await shrink(f);list.push({blob:b,url:URL.createObjectURL(b)})}catch(e){toast(errMsg(e))}
+    try{const b=await shrink(f);list.push({blob:b,url:URL.createObjectURL(b),kind:kind||'label'})}catch(e){toast(errMsg(e))}
   }
   render();
 }
@@ -503,9 +503,17 @@ function libMatches(txt){
   const low=txt.toLowerCase();
   return S.lib.filter(x=>x.name&&x.name.length>=3&&low.includes(x.name.toLowerCase()));
 }
-function foodPrompt(txt,ver,nImg){
+function foodPrompt(txt,ver,nLabel,nMeal){
   const verTxt=ver.length?`\nKullanıcının DOĞRULANMIŞ ürün bilgileri (bunları aynen kullan, kendi tahminini kullanma; 100 g değerini g miktarından türet):\n${ver.map(x=>`- ${x.name}: ${x.g} g için ${JSON.stringify(x.n)}`).join('\n')}\n`:'';
-  const imgTxt=nImg?`\nEkte ürünün besin değeri etiketi fotoğrafı var. Değerleri etiketten OKU (etikette hem 100 g hem porsiyon sütunu varsa 100 g sütununu kullan; yüzde yazıyorsa değil, miktarı al). Bu ürün için basis="etiket", conf="yüksek" yaz. Okuyamadığın değeri uydurma, null bırak. Gramajı kullanıcının yazdığı miktardan al; yazmadıysa etiketteki porsiyon gramajını kullan.\n`:'';
+  const imgTxt=nLabel?`\nEkte ${nLabel} adet ürün besin değeri etiketi fotoğrafı var. Değerleri etiketten OKU (etikette hem 100 g hem porsiyon sütunu varsa 100 g sütununu kullan; yüzde yazıyorsa değil, miktarı al). Bu ürün için basis="etiket", conf="yüksek" yaz. Okuyamadığın değeri uydurma, null bırak. Gramajı kullanıcının yazdığı miktardan al; yazmadıysa etiketteki porsiyon gramajını kullan.\n`:'';
+  const mealTxt=nMeal?`\nEkte ${nMeal} adet YEMEK FOTOĞRAFI var (tabak/porsiyon fotoğrafı; besin etiketi değil). Fotoğraftan şu sırayla çalış:
+a) Görünen her yiyecek ve içecek için AYRI kalem çıkar; sos, yağ, peynir, ekmek, tatlandırıcı, içecek gibi görünen eklemeleri de say. Görünmeyen ama olası malzemeler için (pişirme yağı, yemeğin içi/altı) makul varsayım yap ve note'a yaz.
+b) Porsiyonu referans nesnelerle ölç: standart yemek tabağı çapı ≈ 24-26 cm, çorba kasesi ≈ 14-16 cm çap / 250-300 ml, çatal ≈ 18-20 cm, çay bardağı 100 ml, su bardağı 200 ml, kutu içecek 330 ml, ekmek dilimi 25-30 g, avuç içi ≈ 8-9 cm. Referans nesne yoksa tipik bir porsiyon varsay ve note'a "referans nesne yok" yaz. Yığın yüksekliğini, kase derinliğini ve tabağın doluluk oranını hesaba kat.
+c) "g" alanına en olası PİŞMİŞ/hazır hâl ağırlığını yaz (sıvıda ml). "gLow" ve "gHigh" alanlarına makul alt ve üst sınırı yaz; belirsizlik büyükse aralığı geniş tut, ama gLow ≤ g ≤ gHigh olsun.
+d) Kullanıcı yazıyla gram ya da adet verdiyse yazıyı esas al; fotoğrafı yalnızca yiyeceğin ne olduğunu anlamak için kullan.
+e) basis="fotoğraf" yaz. Porsiyon görsel tahmin olduğundan conf en fazla "orta"; yiyecek net tanınmıyorsa "düşük". Tanımadığın yiyeceği uydurma, note'a yaz.
+f) Paketli ürün görünüyor ve markası okunuyorsa brand alanına yaz; etiket/barkod görünmüyorsa tipik ürün değerlerini kullan ve conf="düşük" yap.
+`:'';
   return `Sen titiz bir diyetisyen ve besin veri tabanı uzmanısın (USDA FoodData Central, TürKomp, ürün etiketleri). Görev: kullanıcının yazdığı yiyecek ve içecekleri tek tek ayır; her biri için porsiyon gramajını ve 100 g (içeceklerde 100 ml) başına besin değerlerini ver.
 
 Kurallar:
@@ -517,19 +525,19 @@ Kurallar:
 6. İç tutarlılık: kcal ≈ 4×protein + 4×karbonhidrat + 9×yağ (±%10); sat+mono+poly ≤ fat; sugar ≤ carbs; fiber ≤ carbs.
 7. conf: "yüksek" (kullanıcının rakamı, etiket ya da çok bilinen standart besin), "orta", "düşük" (belirsiz ürün veya porsiyon). basis: "kullanıcı", "etiket", "veri tabanı" ya da "tahmin".
 8. "search": USDA FoodData Central'da aranacak İngilizce, GENEL (markasız) besin adı; pişirme halini ekle (örn. "chicken breast cooked roasted", "rice white cooked", "egg whole boiled", "olive oil", "lentils cooked boiled"). Türk yemekleri ve karışık yemekler (menemen, mantı, lahmacun, çorba, börek vb.) ya da markalı ürünler için null yaz. "brand": markalı paketli ürünse marka ve ürün adı (örn. "Ülker Çikolatalı Gofret"), değilse null. "barcode": kullanıcı barkod numarası yazdıysa rakamları, yoksa null.
-${verTxt}${imgTxt}
+${verTxt}${imgTxt}${mealTxt}
 Anahtarlar ve birimler: ${KEYDOC}.
-Sadece JSON döndür: {"items":[{"name":"kısa Türkçe ad","qty":"yazılan porsiyon","g":0,"conf":"orta","basis":"veri tabanı","note":"varsa kısa uyarı","search":"chicken breast cooked roasted","brand":null,"barcode":null,"per100":{"kcal":0,"protein":0}}]} (per100 içinde yukarıdaki tüm anahtarlar bulunmalı).
+Sadece JSON döndür: {"items":[{"name":"kısa Türkçe ad","qty":"yazılan porsiyon","g":0,"conf":"orta","basis":"veri tabanı","note":"varsa kısa uyarı","gLow":0,"gHigh":0,"search":"chicken breast cooked roasted","brand":null,"barcode":null,"per100":{"kcal":0,"protein":0}}]} (per100 içinde yukarıdaki tüm anahtarlar bulunmalı).
 
-Yazılan: ${txt||'(yazı yok, etiket fotoğrafına bak)'}`;
+Yazılan: ${txt||(nMeal&&!nLabel?'(yazı yok, yemek fotoğrafına bak)':'(yazı yok, etiket fotoğrafına bak)')}`;
 }
-function auditPrompt(txt,items,ver){
+function auditPrompt(txt,items,ver,nMeal){
   return `Sen bağımsız bir besin değerleri denetçisisin. Aşağıda kullanıcının yazdığı metin ve bir asistanın çıkardığı JSON var. Her kalemi şu açılardan kontrol et; hatalıysa DÜZELT:
 (1) Gramaj, yazılan porsiyonla gerçekçi mi? (porsiyon abartısı ya da eksikliği en sık hatadır)
 (2) 100 g değerleri USDA / TürKomp ile uyumlu mu? Sık hatalar: pişmiş-çiğ karışması, eklenen yağ/şeker/sosun unutulması, mg-mcg birim hatası.
 (3) kcal ≈ 4×protein + 4×karbonhidrat + 9×yağ (±%10).
 (4) Kullanıcının yazdığı rakamlar korunmuş mu?
-(5) Kalem sayısını DEĞİŞTİRME: yalnızca verilen kalemleri kontrol et ve aynı sayıda kalem döndür.
+(5) Kalem sayısını DEĞİŞTİRME: yalnızca verilen kalemleri kontrol et ve aynı sayıda kalem döndür.${nMeal?'\n(6) Ekte yemek fotoğrafı var: gramajları fotoğraftaki tabak/kap ve referans nesnelerle karşılaştır; gerçekçi değilse düzelt ve gLow/gHigh aralığını koru ya da güncelle.':''}
 Emin olmadığın değeri değiştirme. Kesin bilmediğin mikro besin için null kullan. ${ver.length?'Kullanıcının doğrulanmış ürün değerlerine dokunma.':''}
 Aynı şemayla düzeltilmiş JSON döndür ve "changes" dizisine kısa Türkçe notlar ekle (değişiklik yoksa boş dizi): {"items":[{"name":"","qty":"","g":0,"conf":"","basis":"","note":"","per100":{}}],"changes":["Pilav gramajı 300'den 200 g'a çekildi"]}
 
@@ -551,7 +559,10 @@ function toPreviewFood(i){
   const baseN=clone(c.n);
   if(c.n.kcal)c.n.kcal=r0(c.n.kcal);
   const missing=useRef?MICRO_KEYS.filter(k=>p[k]===undefined).length:0;
-  return {name:String(i.name),qty:String(i.qty||''),g,conf:useRef?(i.refConf||'yüksek'):(i.conf||'orta'),basis,note:String(i.note||''),flags:[...extra,...c.flags],baseG:g,baseN,n:c.n,saved:false,
+  const lo=num(i.gLow),hi=num(i.gHigh),range=(lo>0&&hi>=lo&&lo<=g&&g<=hi&&hi/lo<=6)?[lo,hi]:null;
+  let conf=useRef?(i.refConf||'yüksek'):(i.conf||'orta');
+  if(i.basis==='fotoğraf'&&conf==='yüksek')conf='orta'; // porsiyon görsel tahmindir
+  return {name:String(i.name),qty:String(i.qty||''),g,range,photo:i.basis==='fotoğraf',conf,basis,note:String(i.note||''),flags:[...extra,...c.flags],baseG:g,baseN,n:c.n,saved:false,
     ref:i.ref||null,useRef,missing,srcName:useRef?i.ref.name:'',srcId:useRef?i.ref.id:'',raw:{...i,useRef}};
 }
 // Sunucudan gelen referans sonucunu kalemle birleştirir
@@ -566,26 +577,119 @@ const barcodeItem=p=>{
   const core=['kcal','protein','carbs','fat'].filter(k=>p.per100[k]!==undefined).length;
   const name=(p.brand?p.brand+' ':'')+(p.name||('Ürün '+p.id));
   return toPreviewFood({name,qty:p.quantity?('Paket: '+p.quantity):'',g:p.servingG||100,refConf:core===4?'yüksek':'orta',conf:core===4?'yüksek':'orta',basis:'Open Food Facts',per100:null,ref:{source:'Open Food Facts',name,id:p.id,per100:p.per100},useRef:true,
-    note:(core===4?'':'Ürün kaydında bazı değerler eksik; etiketle karşılaştır. ')+(p.servingG?'':'Porsiyon bilgisi yok; miktarı (g) kendin gir.')});
+    note:(core===4?'':'Ürün kaydında bazı değerler eksik; paketin etiket fotoğrafını çekip ürün adını yazarak yeniden hesaplat. ')+(p.servingG?'':'Porsiyon bilgisi yok; miktarı (g) kendin gir.')});
 };
-async function scanBarcode(){
-  if(!('BarcodeDetector' in window)||!navigator.mediaDevices){toast('Bu tarayıcı kamerayla barkod okumayı desteklemiyor; numarayı elle yaz.');return}
+/* ---------- kamera: barkod tarama ve fotoğraf çekme ---------- */
+let ZXP=null;
+function loadZX(){
+  if(window.ZXing)return Promise.resolve(window.ZXing);
+  return ZXP||(ZXP=new Promise((res,rej)=>{
+    const sc=document.createElement('script');sc.src='/zxing.min.js';
+    sc.onload=()=>res(window.ZXing);
+    sc.onerror=()=>{ZXP=null;rej({message:'Barkod okuyucu yüklenemedi; internet bağlantını kontrol et.'})};
+    document.head.appendChild(sc);
+  }));
+}
+const BC_FORMATS=['ean_13','ean_8','upc_a','upc_e'];
+/* Okuyucu: tarayıcının yerleşik BarcodeDetector'ı varsa o, yoksa ZXing (her cihazda çalışır).
+   detect(kaynak) -> [{code,fmt}] */
+async function makeDetector(){
+  if('BarcodeDetector' in window){
+    try{
+      const sup=await BarcodeDetector.getSupportedFormats(),want=BC_FORMATS.filter(f=>sup.includes(f));
+      if(want.length){const d=new BarcodeDetector({formats:want});
+        return {name:'yerleşik',detect:async src=>(await d.detect(src)).map(x=>({code:x.rawValue,fmt:x.format}))}}
+    }catch(e){/* ZXing'e düş */}
+  }
+  const Z=await loadZX();
+  const hints=new Map();
+  hints.set(Z.DecodeHintType.POSSIBLE_FORMATS,[Z.BarcodeFormat.EAN_13,Z.BarcodeFormat.EAN_8,Z.BarcodeFormat.UPC_A,Z.BarcodeFormat.UPC_E]);
+  hints.set(Z.DecodeHintType.TRY_HARDER,true);
+  const reader=new Z.MultiFormatReader();reader.setHints(hints);
+  const FM={};FM[Z.BarcodeFormat.EAN_13]='ean_13';FM[Z.BarcodeFormat.EAN_8]='ean_8';FM[Z.BarcodeFormat.UPC_A]='upc_a';FM[Z.BarcodeFormat.UPC_E]='upc_e';
+  const cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true});
+  const tryDecode=(gray,w,h)=>{
+    try{const r=reader.decode(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.RGBLuminanceSource(gray,w,h))));return {code:r.getText(),fmt:FM[r.getBarcodeFormat()]||''}}
+    catch(e){return null}
+  };
+  return {name:'zxing',detect:async src=>{
+    const w0=src.videoWidth||src.width,h0=src.videoHeight||src.height;
+    if(!w0||!h0)return [];
+    const sc=Math.min(1,1280/Math.max(w0,h0)),w=Math.round(w0*sc),h=Math.round(h0*sc);
+    cv.width=w;cv.height=h;cx.drawImage(src,0,0,w,h);
+    const px=cx.getImageData(0,0,w,h).data,gray=new Uint8ClampedArray(w*h);
+    for(let i=0,j=0;i<px.length;i+=4,j++)gray[j]=(px[i]*77+px[i+1]*150+px[i+2]*29)>>8;
+    let r=tryDecode(gray,w,h);
+    if(!r){ // barkod dik tutulmuş olabilir: 90° döndürüp tekrar dene
+      const rot=new Uint8ClampedArray(w*h);
+      for(let y=0;y<h;y++)for(let x=0;x<w;x++)rot[x*h+(h-1-y)]=gray[y*w+x];
+      r=tryDecode(rot,h,w);
+    }
+    return r?[r]:[];
+  }};
+}
+// Okunan ham değerleri doğrula (kontrol hanesi); geçersizse null
+const bcAccept=(list)=>{for(const x of list||[]){const c=window.BCU?BCU.accept(x.code,x.fmt):String(x.code||'').replace(/\D/g,'');if(c)return c}return null};
+const camStream=()=>navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
+function camOverlay(inner){
   const ov=document.createElement('div');
   ov.style.cssText='position:fixed;inset:0;z-index:20;background:#000;display:flex;flex-direction:column';
-  ov.innerHTML='<video playsinline muted autoplay style="flex:1;width:100%;min-height:0;object-fit:cover"></video><div style="padding:14px;text-align:center;color:#fff;font-size:14px">Barkodu çerçevenin ortasına getir</div><button class="btn" id="bcx" style="margin:0 14px calc(14px + env(safe-area-inset-bottom,0px))">Vazgeç</button>';
-  document.body.appendChild(ov);
-  const video=ov.querySelector('video');let stream=null,stop=false;
+  ov.innerHTML=inner;document.body.appendChild(ov);return ov;
+}
+async function scanBarcode(){
+  if(!camOk()){toast('Bu tarayıcıda kamera kullanılamıyor; numarayı elle yaz ya da fotoğraftan oku.');return}
+  const ov=camOverlay('<video playsinline muted autoplay style="flex:1;width:100%;min-height:0;object-fit:cover"></video><div id="bcm" style="padding:14px;text-align:center;color:#fff;font-size:14px">Barkodu çerçevenin ortasına getir, sabit tut</div><button class="btn" id="bcx" style="margin:0 14px calc(14px + env(safe-area-inset-bottom,0px))">Vazgeç</button>');
+  const video=ov.querySelector('video'),msg=ov.querySelector('#bcm');let stream=null,stop=false;
   const done=()=>{stop=true;try{stream&&stream.getTracks().forEach(t=>t.stop())}catch(e){}ov.remove()};
   ov.querySelector('#bcx').onclick=done;
   try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
-    video.srcObject=stream;await video.play();
-    const det=new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e']});
+    msg.textContent='Kamera ve okuyucu hazırlanıyor…';
+    const det=await makeDetector();
+    stream=await camStream();video.srcObject=stream;await video.play();
+    msg.textContent='Barkodu çerçevenin ortasına getir, sabit tut';
+    const t0=Date.now();let last=null,hits=0;
     while(!stop){
-      try{const r=await det.detect(video);if(r.length&&r[0].rawValue){const code=String(r[0].rawValue).replace(/\D/g,'');done();V.bc.code=code;await A.bcsearch();return}}catch(e){}
-      await new Promise(r=>setTimeout(r,250));
+      let code=null;
+      try{code=bcAccept(await det.detect(video))}catch(e){}
+      if(code){hits=(code===last)?hits+1:1;last=code;if(hits>=2){done();V.bc.code=code;V.bc.open=true;await A.bcsearch();return}}
+      else{last=null;hits=0}
+      if(Date.now()-t0>12000)msg.textContent='Okunmuyor mu? Işığı artır, barkodu yaklaştır/uzaklaştır; olmazsa numarayı elle yaz.';
+      await new Promise(r=>setTimeout(r,180));
     }
-  }catch(e){done();toast('Kameraya erişilemedi; izin ver ya da numarayı elle yaz.')}
+  }catch(e){done();toast(e&&e.message&&!/Permission|NotAllowed|NotFound|denied/i.test(e.message)?e.message:'Kameraya erişilemedi; izin ver ya da numarayı elle yaz.')}
+}
+// Fotoğraftan barkod oku (canlı tarama zorlaşırsa)
+async function barcodeFromFile(f){
+  const det=await makeDetector(),bmp=await createImageBitmap(f);
+  let code=bcAccept(await det.detect(bmp));
+  if(!code){ // büyük görseli küçültüp bir daha dene
+    const sc=Math.min(1,1000/Math.max(bmp.width,bmp.height)),c=document.createElement('canvas');
+    c.width=Math.round(bmp.width*sc);c.height=Math.round(bmp.height*sc);c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
+    code=bcAccept(await det.detect(c));
+  }
+  return code;
+}
+/* Uygulama içi kamera: deklanşörle fotoğraf çeker; "Galeriden seç" ile dosya da alınır. */
+function cameraCapture(hint){
+  return new Promise(async resolve=>{
+    const ov=camOverlay(`<video playsinline muted autoplay style="flex:1;width:100%;min-height:0;object-fit:cover"></video>
+      <div style="padding:10px 14px;text-align:center;color:#fff;font-size:14px">${esc(hint)}</div>
+      <div style="display:flex;gap:10px;margin:0 14px calc(14px + env(safe-area-inset-bottom,0px))">
+        <button class="btn alt" id="camx">Vazgeç</button>
+        <button class="btn" id="camg" style="flex:1" disabled>📸 Çek</button>
+        <label class="btn alt filebtn" style="color:var(--ink)">Galeri<input type="file" accept="${esc(imgAccept())}" id="camf" style="display:none"></label></div>`);
+    const video=ov.querySelector('video');let stream=null,fin=false;
+    const end=v=>{if(fin)return;fin=true;try{stream&&stream.getTracks().forEach(t=>t.stop())}catch(e){}ov.remove();resolve(v)};
+    ov.querySelector('#camx').onclick=()=>end(null);
+    ov.querySelector('#camf').onchange=e=>end((e.target.files||[])[0]||null);
+    ov.querySelector('#camg').onclick=()=>{
+      const c=document.createElement('canvas');c.width=video.videoWidth;c.height=video.videoHeight;
+      c.getContext('2d').drawImage(video,0,0);
+      c.toBlob(b=>end(b),'image/jpeg',.92);
+    };
+    try{stream=await camStream();video.srcObject=stream;await video.play();ov.querySelector('#camg').disabled=false}
+    catch(e){toast('Kameraya erişilemedi; izin ver ya da "Galeri" ile fotoğraf seç.')}
+  });
 }
 
 /* ---------- Bugün ---------- */
@@ -617,7 +721,14 @@ function suppCard(d){
 }
 function thumbs(listKey){
   const l=V[listKey];
-  return l.length?`<div class="thumbs">${l.map((x,i)=>`<div class="thumb"><img src="${x.url}" alt="Etiket fotoğrafı ${i+1}"><button data-a="imgdel" data-k="${listKey}" data-ix="${i}" aria-label="Fotoğrafı kaldır">✕</button></div>`).join('')}</div>`:'';
+  return l.length?`<div class="thumbs">${l.map((x,i)=>`<div class="thumb"><img src="${x.url}" alt="${x.kind==='meal'?'Yemek':'Etiket'} fotoğrafı ${i+1}"><span class="small" style="position:absolute;left:4px;bottom:4px;background:rgba(0,0,0,.6);color:#fff;padding:1px 6px;border-radius:8px">${x.kind==='meal'?'🍽 yemek':'🏷 etiket'}</span><button data-a="imgdel" data-k="${listKey}" data-ix="${i}" aria-label="Fotoğrafı kaldır">✕</button></div>`).join('')}</div>`:'';
+}
+const camOk=()=>!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia);
+function foodPhotoBtn(kind,label){
+  if(!imgMax())return '';
+  const full=V.fimgs.length>=Math.min(4,imgMax());
+  if(camOk())return `<button class="btn alt sm" data-a="cam" data-kind="${kind}" ${full?'disabled style="opacity:.45"':''}>${label}</button>`;
+  return `<label class="btn alt sm filebtn" ${full?'style="opacity:.45;pointer-events:none"':''}>${label}<input type="file" accept="${esc(imgAccept())}" multiple data-i="fimg" data-kind="${kind}" style="display:none"></label>`;
 }
 function photoBtn(listKey,inputKey,label){
   if(!imgMax())return '';
@@ -649,7 +760,8 @@ function viewToday(){
     <p class="mut small" style="margin:4px 0 8px">Doğal yaz: “2 yumurta, 1 dilim tam buğday ekmeği, bir bardak süt”. Gramaj ya da etiket değeri yazarsan aynen kullanırım.</p>
     <textarea data-i="food" placeholder="Yediklerini buraya yaz…">${esc(V.food)}</textarea>
     ${thumbs('fimgs')}
-    <div class="btnrow" style="margin-top:8px">${photoBtn('fimgs','fimg','Etiket fotoğrafı')}<button class="btn alt sm" data-a="bcopen">▥ Barkod</button>${precBtn()}</div>
+    <div class="btnrow" style="margin-top:8px">${foodPhotoBtn('meal','🍽 Yemek fotoğrafı')}${foodPhotoBtn('label','🏷 Etiket fotoğrafı')}<button class="btn alt sm" data-a="bcopen">▥ Barkod</button>${precBtn()}</div>
+    <p class="mut small" style="margin:8px 0 0">En doğru sonuç için: paketli üründe <b>barkodu</b> tara; yemekte fotoğrafı üstten çek, tabağın tamamı ve yanında çatal/kaşık gibi bir ölçü nesnesi görünsün; biliyorsan gramajı yazıya ekle.</p>
     <div class="row" style="margin-top:8px"><select data-i="mealtype" style="width:auto" aria-label="Öğün">${['Kahvaltı','Öğle','Akşam','Atıştırmalık'].map(m=>`<option ${m===V.mealType?'selected':''}>${m}</option>`).join('')}</select>
     <button class="btn grow" data-a="analyze" ${V.busy?'disabled':''}>${V.busy?esc(V.busyMsg||'Hesaplıyorum…'):'Kaloriyi hesapla'}</button></div>
     ${V.err?`<p class="small" style="color:var(--bad)">${esc(V.err)}</p>`:''}
@@ -659,7 +771,8 @@ function viewToday(){
   if(V.bc.open){
     h+=`<div class="card"><h3>Barkodla ekle</h3><p class="mut small" style="margin:4px 0 8px">Paketli ürünün barkod numarasını yaz ya da kamerayla tara. Değerler Open Food Facts veritabanından gelir (topluluk verisi; etiketle karşılaştırman iyi olur).</p>
       <div class="row"><input data-i="bc" inputmode="numeric" placeholder="örn. 8690504010001" value="${esc(V.bc.code)}" aria-label="Barkod numarası"><button class="btn sm" data-a="bcsearch" ${V.bc.busy?'disabled':''} style="min-width:72px">${V.bc.busy?'…':'Ara'}</button></div>
-      ${('BarcodeDetector' in window)?`<button class="btn alt sm" style="margin-top:8px" data-a="bcscan">📷 Kamerayla tara</button>`:''}
+      <div class="btnrow" style="margin-top:8px">${camOk()?`<button class="btn alt sm" data-a="bcscan">📷 Kamerayla tara</button>`:''}<label class="btn alt sm filebtn">🖼 Fotoğraftan oku<input type="file" accept="image/*" data-i="bcfile" style="display:none"></label></div>
+      <p class="mut small" style="margin:6px 0 0">Kontrol hanesi geçmeyen (yanlış okunmuş) barkodlar otomatik reddedilir.</p>
       ${V.bc.err?`<p class="flag">⚠ ${esc(V.bc.err)}</p>`:''}</div>`;
   }
   if(V.preview){
@@ -667,6 +780,7 @@ function viewToday(){
     h+=`<div class="card" style="border-color:var(--pro)"><h3>Şunları buldum</h3><p class="small mut" style="margin:2px 0 0">Miktarı (g/ml) düzeltirsen değerler otomatik güncellenir.</p>${V.preview.map((i,ix)=>`<div class="pv">
       <div class="row"><b class="grow">${esc(i.name)}</b><button class="ghost" data-a="pdel" data-ix="${ix}" aria-label="Çıkar">✕</button></div>
       <div class="mut small">${esc(i.qty)}</div>
+      ${i.photo?`<div class="small mut">📸 Fotoğraftan tahmin${i.range?`: ${r0(i.range[0])}–${r0(i.range[1])} g aralığında`:''}. Tartıyla ya da ölçüyle doğrulayıp miktarı düzeltirsen değerler güncellenir.</div>`:''}
       <div class="row" style="align-items:flex-end;margin-top:6px"><div style="width:96px"><label for="pg${ix}">Miktar (g/ml)</label><input id="pg${ix}" data-i="pg" data-ix="${ix}" inputmode="decimal" value="${f1(i.g)}"></div><div class="grow num" id="pvs-${ix}">${pvLine(i)}</div></div>
       <div style="margin-top:6px">${confChip(i.conf,i.basis)}<button class="chip" data-a="plib" data-ix="${ix}" ${i.saved?'disabled':''}>${i.saved?'⭐ kaydedildi':'⭐ Ürünlerime kaydet'}</button></div>
       ${i.ref?(i.useRef?`<div class="small" style="margin-top:6px">📚 <b>${esc(i.ref.source)}</b>: ${esc(i.ref.name)}${i.ref.source==='USDA'?' (100 g başına)':''}${i.missing?` <span class="mut">· kaynakta olmayan ${i.missing} vitamin/mineral değeri toplamlara dahil değil</span>`:''}</div>${i.raw.ai?`<div class="small" style="margin-top:4px"><button class="chip" data-a="palt" data-ix="${ix}">Yapay zekâ tahminine dön</button></div>`:''}`
@@ -1195,18 +1309,20 @@ const A={
   /* yemek */
   async analyze(){
     const txt=V.food.trim(),imgs=V.fimgs.map(x=>x.blob);
+    const labelImgs=V.fimgs.filter(x=>x.kind!=='meal').map(x=>x.blob),mealImgs=V.fimgs.filter(x=>x.kind==='meal').map(x=>x.blob);
     if((!txt&&!imgs.length)||V.busy)return;
     V.busy=true;V.err='';V.busyMsg='Hesaplanıyor…';render();
     try{
-      const ver=libMatches(txt),opts={modelTier:'default'};
+      // Görselli işlerde (özellikle yemek fotoğrafı) en güçlü model zinciri kullanılır
+      const ver=libMatches(txt),opts={modelTier:mealImgs.length?'complex':'default'};
       if(imgs.length)opts.images=imgs;
-      const r=await askJson(foodPrompt(txt,ver,imgs.length),opts);
+      const r=await askJson(foodPrompt(txt,ver,labelImgs.length,mealImgs.length),opts);
       let items=(r.items||[]).filter(i=>i&&i.name),notes=[];
       if(!items.length)throw {message:'Yiyecek bulamadım, biraz daha açık yazar mısın?'};
       // 2) referans veritabanı: USDA (genel besinler) / Open Food Facts (markalı, barkodlu)
       let res=[];
       const cfg=AUTH.config.ref||{};
-      if(!imgs.length&&(cfg.usda||cfg.off)){
+      if(!labelImgs.length&&(cfg.usda||cfg.off)){ // etiket okunduysa o değerler esas; yemek fotoğrafında referans doğrulama yapılır
         V.busyMsg='Referans veritabanı kontrol ediliyor…';render();
         try{
           const lr=await api('/lookup',{method:'POST',body:{items:items.map((it,i)=>({ix:i,name:it.name,search:it.search||null,brand:it.brand||null,barcode:it.barcode||null,
@@ -1217,11 +1333,11 @@ const A={
       items=items.map((it,i)=>withRef(it,res.find(x=>x.ix===i)));
       // 3) denetim: yalnızca referansla doğrulanamayan kalemler için
       const need=items.map((it,i)=>i).filter(i=>!(items[i].ref&&items[i].useRef));
-      if(S.prefs.precise&&!imgs.length&&txt&&need.length){
+      if(S.prefs.precise&&!labelImgs.length&&(txt||mealImgs.length)&&need.length){
         V.busyMsg='Doğrulanıyor…';render();
         try{
-          const sub=need.map(i=>{const it=items[i];return {name:it.name,qty:it.qty,g:it.g,conf:it.conf,basis:it.basis,note:it.note,per100:it.per100}});
-          const r2=await askJson(auditPrompt(txt,sub,ver),{modelTier:'default'});
+          const sub=need.map(i=>{const it=items[i];return {name:it.name,qty:it.qty,g:it.g,gLow:it.gLow,gHigh:it.gHigh,conf:it.conf,basis:it.basis,note:it.note,per100:it.per100}});
+          const r2=await askJson(auditPrompt(txt,sub,ver,mealImgs.length),mealImgs.length?{modelTier:'complex',images:mealImgs}:{modelTier:'default'});
           const it2=(r2.items||[]).filter(i=>i&&i.name);
           if(it2.length===sub.length){
             need.forEach((ix,k)=>{items[ix]={...items[ix],...it2[k],ai:it2[k].per100||items[ix].ai}});
@@ -1249,6 +1365,22 @@ const A={
     V.bc.busy=false;render();
   },
   bcscan(){return scanBarcode()},
+  async bcfromfile(f){
+    V.bc.err='';V.bc.busy=true;render();
+    try{
+      const code=await barcodeFromFile(f);
+      if(!code){V.bc.err='Fotoğrafta geçerli bir barkod okunamadı. Barkodu net, düz ve yakın çek; ya da numarayı elle yaz.';V.bc.busy=false;render();return}
+      V.bc.code=code;V.bc.busy=false;await A.bcsearch();return;
+    }catch(e){V.bc.err=errMsg(e)}
+    V.bc.busy=false;render();
+  },
+  async cam(ds){
+    const kind=ds.kind==='meal'?'meal':'label';
+    if(V.fimgs.length>=Math.min(4,imgMax()))return;
+    const hint=kind==='meal'?'Tabağı üstten çek: tüm yemek ve yanında çatal/kaşık/bardak görünsün':'Besin değerleri tablosunu düz, net ve yakın çek';
+    const f=await cameraCapture(hint);
+    if(f)await addImgs('fimgs',[f],kind);
+  },
   pdel(ds){V.preview.splice(+ds.ix,1);if(!V.preview.length)V.preview=null;render()},
   pcancel(){V.preview=null;V.pnotes=[];render()},
   plib(ds){
@@ -1427,7 +1559,8 @@ document.addEventListener('change',e=>{
   if(k==='pickdate'||k==='hdate')jump(t.value);
   else if(k==='admdate'){if(t.value&&t.value<=TODAY){V.adm.date=t.value;render()}}
   else if(k==='import'&&t.files&&t.files[0]){importFile(t.files[0]);t.value=''}
-  else if(k==='fimg'||k==='simg'){const files=Array.from(t.files||[]);t.value='';addImgs(k==='fimg'?'fimgs':'simgs',files)}
+  else if(k==='fimg'||k==='simg'){const files=Array.from(t.files||[]),kd=(t.dataset&&t.dataset.kind)||'label';t.value='';addImgs(k==='fimg'?'fimgs':'simgs',files,kd)}
+  else if(k==='bcfile'){const f=(t.files||[])[0];t.value='';if(f)A.bcfromfile(f)}
   else if(k==='saddf'&&t.value){const id=t.dataset.id;(V.sf[id]=V.sf[id]||[]).push(t.value);render()}
 });
 document.addEventListener('input',e=>{
