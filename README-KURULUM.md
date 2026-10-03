@@ -55,6 +55,7 @@ AI_CHAIN=gemini:gemini-3-flash-preview,gemini:gemini-2.5-flash,gemini:gemini-2.5
 - **Model adlarını doğrula** (Google adları değiştirir): `python test_models.py --key ANAHTAR --list`
 - Gemini 3.8 Flash denemek için: `gemini:gemini-3.8-flash` (ücretsiz katman günlük limiti çok düşük olabilir, ücretli fiyat 1 Ocak 2027'de iki katına çıkıyor).
 - Ücretsiz modellere düşmek için OpenRouter: `OPENROUTER_API_KEY` gir ve zincire `openrouter:MODEL_ADI:free` ekle.
+- **NVIDIA (DeepSeek) yedeği:** `NVIDIA_API_KEY` (https://build.nvidia.com) tanımlayıp zincirin SONUNA `nvidia:deepseek-ai/deepseek-v4.1-flash` ekleyebilirsin. Bu bir metin modelidir: fotoğraflı isteklerde otomatik atlanır. Ücretsiz uç noktada cevap 1-2 dakika sürebilir (gerçek ölçüm: ~117 sn), bu yüzden yalnızca diğer modeller başarısız olursa devreye girmesi için en sona konur. Doğruluğu gerçek bir yemek isteğinde doğrulandı (haşlanmış yumurta 155 kcal/100 g).
 - **Maliyeti düşüren şeyler:** ortak önbellek (aynı soru ikinci kez API'ye gitmez), kişi başı günlük limit (`AI_DAILY_LIMIT_PER_USER`, varsayılan 80), herkes için toplam limit (300). Kota dolunca yiyecek elle girilebilir; uygulama yapay zekâsız da çalışır.
 - Hassas mod (2. denetim adımı) çağrı sayısını iki katına çıkarır; Ayarlar → Tercihler'den kapatılabilir.
 

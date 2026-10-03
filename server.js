@@ -19,6 +19,7 @@ const TRUST_PROXY = env.TRUST_PROXY !== 'false';
 const TZ = env.AI_TZ || 'Europe/Istanbul';
 const GEMINI_BASE = (env.GEMINI_BASE || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '');
 const OPENROUTER_BASE = (env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+const NVIDIA_BASE = (env.NVIDIA_BASE || 'https://integrate.api.nvidia.com/v1').replace(/\/$/, '');
 const DEFAULT_CHAIN = 'gemini:gemini-3-flash-preview,gemini:gemini-2.5-flash,gemini:gemini-2.5-flash-lite';
 const CHAINS = {
   default: parseChain(env.AI_CHAIN || DEFAULT_CHAIN),
@@ -368,8 +369,35 @@ async function callOpenRouter(model, prompt, images, wantJson, timeout) {
   if (!text) throw new AiErr('empty_completion', 'Boş cevap');
   return String(text);
 }
-const PROVIDERS = { gemini: callGemini, openrouter: callOpenRouter };
-const aiEnabled = () => Object.values(CHAINS).some(ch => ch.some(e => (e.provider === 'gemini' && env.GEMINI_API_KEY) || (e.provider === 'openrouter' && env.OPENROUTER_API_KEY)));
+/* NVIDIA (build.nvidia.com, OpenAI uyumlu). DeepSeek gibi "düşünen" modeller cevabı önce reasoning_content'te düşünür;
+   ücretsiz uç noktada ilk parça ~1 dk sürebilir, bu yüzden akışlı okunur ve yalnızca asıl cevap (content) alınır. Görsel desteklemez. */
+async function callNvidia(model, prompt, images, wantJson, timeout) {
+  const key = env.NVIDIA_API_KEY;
+  if (!key) throw new AiErr('ai_disabled', 'NVIDIA anahtarı tanımlı değil.');
+  const r = await fetch(`${NVIDIA_BASE}/chat/completions`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, Accept: 'text/event-stream' },
+    body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 16384, stream: true }),
+    signal: AbortSignal.timeout(Math.max(timeout, 150000)),
+  });
+  if (!r.ok) throw new AiErr(r.status === 429 ? 'rate_limited' : 'upstream_error', `NVIDIA ${r.status}`, r.status);
+  const dec = new TextDecoder(); let buf = '', text = '';
+  for await (const chunk of r.body) {
+    buf += dec.decode(chunk, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!line.startsWith('data:')) continue;
+      const d = line.slice(5).trim();
+      if (!d || d === '[DONE]') continue;
+      try { const j = JSON.parse(d); const c = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content; if (typeof c === 'string') text += c; } catch (e) { /* eksik parça */ }
+    }
+  }
+  if (!text.trim()) throw new AiErr('empty_completion', 'Boş cevap');
+  return text;
+}
+const PROVIDERS = { gemini: callGemini, openrouter: callOpenRouter, nvidia: callNvidia };
+const TEXT_ONLY = new Set(['nvidia']); // görsel okuyamayan sağlayıcılar: fotoğraflı isteklerde atlanır
+const aiEnabled = () => Object.values(CHAINS).some(ch => ch.some(e => (e.provider === 'gemini' && env.GEMINI_API_KEY) || (e.provider === 'openrouter' && env.OPENROUTER_API_KEY) || (e.provider === 'nvidia' && env.NVIDIA_API_KEY)));
 
 async function runChain(chain, prompt, images, wantJson, tier) {
   const timeout = tier === 'complex' ? 120000 : 75000;
@@ -377,6 +405,7 @@ async function runChain(chain, prompt, images, wantJson, tier) {
   for (const e of chain) {
     const fn = PROVIDERS[e.provider];
     if (!fn) continue;
+    if (images.length && TEXT_ONLY.has(e.provider)) continue;
     try {
       const text = await fn(e.model, prompt, images, wantJson, timeout);
       if (!wantJson) return { text, model: `${e.provider}:${e.model}` };
@@ -521,7 +550,7 @@ async function handleAdmin(req, res, p, m, cu, ip) {
       settings: { registration: getSetting('registration'), aiUserLimit: Number(getSetting('ai_user_limit')), aiGlobalLimit: Number(getSetting('ai_global_limit')), maxUsers: Number(getSetting('max_users')), showAccessLog: getSetting('show_access_log') === 'true' },
       stats: { users: users.length, aiToday: q.usageSum.get(day).n, aiCache: q.cacheCount.get().n, foodCache: q.foodCacheCount.get().n, dbBytes: dbBytes() },
       system: {
-        chain: CHAINS.default.map(c => c.provider + ':' + c.model), geminiKey: !!env.GEMINI_API_KEY, openrouterKey: !!env.OPENROUTER_API_KEY, usdaKey: ref.usdaEnabled(),
+        chain: CHAINS.default.map(c => c.provider + ':' + c.model), geminiKey: !!env.GEMINI_API_KEY, openrouterKey: !!env.OPENROUTER_API_KEY, nvidiaKey: !!env.NVIDIA_API_KEY, usdaKey: ref.usdaEnabled(),
         registrationEffective: regMode(), tz: TZ,
       },
     });
