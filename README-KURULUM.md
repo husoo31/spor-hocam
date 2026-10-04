@@ -50,7 +50,7 @@ test/*.test.mjs      testler:  node test/server.test.mjs, test/ref.test.mjs, tes
 ## 4) Yapay zekâ modeli ve maliyet
 `AI_CHAIN` soldan sağa denenir; ilk model hata verirse ya da ücretsiz kotası dolarsa sıradakine geçilir:
 ```
-AI_CHAIN=gemini:gemini-3.5-flash,gemini:gemini-3.5-flash-lite,gemini:gemini-3.1-flash-lite
+AI_CHAIN=gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite,gemini:gemini-3.5-flash,groq:openai/gpt-oss-120b,groq:openai/gpt-oss-20b,groq:qwen/qwen3.8-27b,openrouter:openrouter/free
 ```
 - **Model adlarını doğrula** (Google adları değiştirir): `python test_models.py --key ANAHTAR --list`
 - Gemini 3.8 Flash denemek için: `gemini:gemini-3.8-flash` (ücretsiz katman günlük limiti çok düşük olabilir, ücretli fiyat 1 Ocak 2027'de iki katına çıkıyor).

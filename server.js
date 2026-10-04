@@ -21,7 +21,8 @@ const TZ = env.AI_TZ || 'Europe/Istanbul';
 const GEMINI_BASE = (env.GEMINI_BASE || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '');
 const OPENROUTER_BASE = (env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
 const NVIDIA_BASE = (env.NVIDIA_BASE || 'https://integrate.api.nvidia.com/v1').replace(/\/$/, '');
-const DEFAULT_CHAIN = 'gemini:gemini-3.5-flash,gemini:gemini-3.5-flash-lite,gemini:gemini-3.1-flash-lite';
+// Ölçüme göre sıralı (16 yemek, USDA referansı): en doğru + hızlı + güvenilir önde. Yavaş sağlayıcılar (NVIDIA DeepSeek ~200 sn, ücretsiz OpenRouter Qwen ~50 sn) varsayılana alınmadı.
+const DEFAULT_CHAIN = 'gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite,gemini:gemini-3.5-flash,groq:openai/gpt-oss-120b,groq:openai/gpt-oss-20b,groq:qwen/qwen3.8-27b,openrouter:openrouter/free';
 const CHAINS = {
   default: parseChain(env.AI_CHAIN || DEFAULT_CHAIN),
   quick: parseChain(env.AI_CHAIN_QUICK || env.AI_CHAIN || DEFAULT_CHAIN),
@@ -485,8 +486,8 @@ async function runChain(chain, prompt, images, wantJson, tier) {
   const lastIdx = usable.length - 1;
   let last = null, jsonErr = null; // jsonErr: bir model ulaşıldı ama bozuk cevap verdi; bu, sonradan gelen bağlantı hatalarından daha bilgilendiricidir
   const attempt = async (e, isLast) => {
-    // son çare dışındakilere kısa süre tanı: asılan bir model sıradakini geciktirmesin
-    const t = isLast ? Math.max(timeout, e.provider === 'nvidia' ? 150000 : timeout) : Math.min(timeout, images.length ? FAST_IMG_MS : FAST_MS);
+    // her modele kısa süre tanı (yavaş olan NVIDIA hariç): asılan bir model sıradakini ve yedek tabloyu geciktirmesin
+    const t = e.provider === 'nvidia' ? Math.max(timeout, 150000) : Math.min(timeout, images.length ? FAST_IMG_MS : FAST_MS);
     try {
       const text = await PROVIDERS[e.provider](e.model, prompt, images, wantJson, t);
       if (!wantJson) { breakerOk(e); return { text, model: entryKey(e) }; }
@@ -615,7 +616,7 @@ async function runStatus() {
       : httpOk(`${GEMINI_BASE}/models?pageSize=1`, { 'x-goog-api-key': env.GEMINI_API_KEY })),
     probe('openrouter', 'OpenRouter (yedek yapay zekâ)', async () => !env.OPENROUTER_API_KEY ? { off: 'anahtar tanımlı değil' }
       : httpOk(`${OPENROUTER_BASE}/key`, { Authorization: `Bearer ${env.OPENROUTER_API_KEY}` })),
-    probe('nvidia', 'NVIDIA DeepSeek (son yedek)', async () => !env.NVIDIA_API_KEY ? { off: 'anahtar tanımlı değil' }
+    probe('nvidia', 'NVIDIA DeepSeek', async () => !env.NVIDIA_API_KEY ? { off: 'anahtar tanımlı değil' }
       : httpOk(`${NVIDIA_BASE}/models`, { Authorization: `Bearer ${env.NVIDIA_API_KEY}` })),
     ...['groq', 'cerebras', 'mistral'].filter(k => env[KEY_ENV[k]]).map(k => probe(k, `${OPENAI_COMPAT[k].name} (yedek yapay zekâ)`,
       () => httpOk(`${OPENAI_COMPAT[k].base}/models`, { Authorization: `Bearer ${env[KEY_ENV[k]]}` }))),
