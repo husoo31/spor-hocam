@@ -412,8 +412,16 @@ function toast(msg){
   el.textContent='Bir sorun oluştu: '+msg;el.style.display='block';
   clearTimeout(toastT);toastT=setTimeout(()=>{el.style.display='none'},8000);
 }
-addEventListener('error',e=>toast(e.message||'bilinmeyen hata'));
-addEventListener('unhandledrejection',e=>toast((e.reason&&e.reason.message)||String(e.reason)));
+// Yalnızca bu uygulamanın kendi hatalarını göster; tarayıcı eklentilerinden/üçüncü taraf betiklerden gelen hatalar kullanıcıyı korkutmasın (konsola yazılır)
+addEventListener('error',e=>{
+  if(e.filename?!String(e.filename).startsWith(location.origin):/^Script error/i.test(e.message||'')){console.warn('Dış kaynaklı hata yok sayıldı:',e.message,e.filename||'');return}
+  toast(e.message||'bilinmeyen hata');
+});
+addEventListener('unhandledrejection',e=>{
+  const st=(e.reason&&e.reason.stack)||'';
+  if(st&&!st.includes(location.origin)){console.warn('Dış kaynaklı hata yok sayıldı:',e.reason&&e.reason.message);return}
+  toast((e.reason&&e.reason.message)||String(e.reason));
+});
 
 /* ---------- Yapay zekâ (sunucu üzerinden) ---------- */
 async function blobToB64(b){
@@ -465,6 +473,12 @@ function dayNav(){
   return `<div class="top"><button class="ghost" data-a="day" data-n="-1" aria-label="Önceki gün">‹</button>
   <div class="d dp"><div>${dlabel(V.date)} <span class="mut" style="font-weight:400">▾</span></div><div class="mut small" style="font-weight:400">${dfull(V.date)}</div><input type="date" data-i="pickdate" max="${TODAY}" value="${V.date}" aria-label="Tarih seç"></div>
   <button class="ghost" data-a="day" data-n="1" aria-label="Sonraki gün" ${V.date>=TODAY?'disabled style="opacity:.3"':''}>›</button></div>`;
+}
+// Karbonhidrat dağılımı: toplam, şeker, lif, geriye kalan (nişasta vb.) ve net (lif hariç) karbonhidrat
+function carbSplit(t){
+  const c=num(t.carbs),su=Math.min(num(t.sugar),c),fi=Math.min(num(t.fiber),Math.max(0,c-su));
+  const other=Math.max(0,c-su-fi);
+  return `toplam ${f1(c)} g · şeker ${f1(su)} g · lif ${f1(fi)} g · nişasta ve diğerleri ${f1(other)} g · net (lif hariç) ${f1(Math.max(0,c-num(t.fiber)))} g`;
 }
 function macroSplit(t){
   const p=t.protein*4,c=t.carbs*4,f=t.fat*9,s=p+c+f;
@@ -813,7 +827,8 @@ function viewToday(){
     if(wr.length)h+=`<div class="card warn"><h3>⚠ Üst sınır uyarısı</h3><p class="small" style="margin:6px 0">${wr.map(esc).join('<br>')}</p><p class="note" style="margin:6px 0 0">Bu sınırlar yetişkinler için genel değerlerdir. Yüksek doz takviye kullanıyorsan doktor ya da eczacıya danış.</p></div>`;
     h+=`<div class="card"><h3>Detaylı besin analizi</h3>
       ${macroSplit(t)}
-      <div class="small" style="margin-top:12px"><b>Yağ dağılımı:</b> <span class="num">toplam ${f1(t.fat)} g · doymuş ${f1(t.sat)} g · tekli doymamış ${f1(t.mono)} g · çoklu doymamış ${f1(t.poly)} g</span></div>
+      <div class="small" style="margin-top:12px"><b>Karbonhidrat dağılımı:</b> <span class="num">${carbSplit(t)}</span></div>
+      <div class="small" style="margin-top:6px"><b>Yağ dağılımı:</b> <span class="num">toplam ${f1(t.fat)} g · doymuş ${f1(t.sat)} g · tekli doymamış ${f1(t.mono)} g · çoklu doymamış ${f1(t.poly)} g</span></div>
       ${g.kcal?nGroups(t,st):''}
       ${missing?`<p class="note">${missing} kayıt eski sürümden; bazı vitamin/mineral detayları yok, toplamlar eksik olabilir.</p>`:''}
       ${supTaken?`<p class="note" style="margin-top:6px">Toplamlara aldığın takviyeler de dahil.</p>`:''}
