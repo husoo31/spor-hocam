@@ -1224,7 +1224,10 @@ function admSystem(){
     <label class="chk" style="margin-top:14px;align-items:flex-start"><input type="checkbox" name="showAccessLog" ${S_.showAccessLog?'checked':''} style="margin-top:2px"><span>Kullanıcılar, verilerine baktığımı kendi ekranlarında görsün <span class="mut small">(kapalıyken yalnızca şifre sıfırlama, veri silme gibi hesabı etkileyen işlemler görünür)</span></span></label>
     <p class="small mut" style="margin:10px 0 0">Kaydı herkese açmak için şifreni gir (diğer değişikliklerde boş bırakabilirsin).</p>${admPwField('apw5').replace(' required','')}
     <button class="btn full" style="margin-top:12px">Kaydet</button></form></div>
-  <div class="card"><h3>Durum</h3><div class="small" style="line-height:1.9">Gemini anahtarı: ${ok(sy.geminiKey)}<br>OpenRouter anahtarı: ${ok(sy.openrouterKey)}<br>NVIDIA anahtarı: ${ok(sy.nvidiaKey)}<br>USDA anahtarı: ${ok(sy.usdaKey)}<br>Model zinciri: <span class="num">${esc(sy.chain.join(' → '))}</span><br>Geçerli kayıt modu: <b>${esc(sy.registrationEffective)}</b><br>Önbellek: ${D.stats.aiCache} YZ cevabı · ${D.stats.foodCache} besin araması<br>Veritabanı: ${fmtBytes(D.stats.dbBytes)}<br>Saat dilimi: ${esc(sy.tz)}</div>
+  <div class="card"><h3>Yedek</h3><p class="small mut" style="margin:4px 0 8px">Veritabanı günde bir kez otomatik yedeklenir, son 14 yedek saklanır.</p>
+    <div class="small">${D.backup&&D.backup.last?`Son yedek: <b>${fmtTs(D.backup.last.at)}</b> · ${fmtBytes(D.backup.last.bytes)} · ${D.backup.count} yedek`:'<span style="color:var(--bad)">Henüz yedek yok</span>'}</div>
+    <button class="btn alt sm" style="margin-top:8px" data-a="admbackup">Şimdi yedekle</button></div>
+  <div class="card"><h3>Durum</h3><div class="small" style="line-height:1.9">Gemini anahtarı: ${ok(sy.geminiKey)}<br>OpenRouter anahtarı: ${ok(sy.openrouterKey)}<br>NVIDIA anahtarı: ${ok(sy.nvidiaKey)}<br>Groq anahtarı: ${ok(sy.groqKey)}<br>Cerebras anahtarı: ${ok(sy.cerebrasKey)}<br>Mistral anahtarı: ${ok(sy.mistralKey)}<br>USDA anahtarı: ${ok(sy.usdaKey)}<br>Model zinciri: <span class="num">${esc(sy.chain.join(' → '))}</span><br>Geçerli kayıt modu: <b>${esc(sy.registrationEffective)}</b><br>Önbellek: ${D.stats.aiCache} YZ cevabı · ${D.stats.foodCache} besin araması<br>Veritabanı: ${fmtBytes(D.stats.dbBytes)}<br>Saat dilimi: ${esc(sy.tz)}</div>
     <p class="note">Model zinciri, API anahtarları ve USDA anahtarı Coolify ortam değişkenlerinden değişir; sunucu yeniden başlatılır.</p></div>`;
 }
 function admLog(){
@@ -1338,6 +1341,7 @@ const A={
   day(ds){const n=addDays(V.date,+ds.n);if(n>TODAY)return;V.date=n;V.preview=null;V.err='';V.edit=null;V.undo=null;render()},
   open(ds){V.date=ds.d;V.tab='today';V.preview=null;V.edit=null;V.undo=null;window.scrollTo(0,0);render()},
   hmore(){V.hmore=true;render()},
+  async admbackup(){try{await api('/admin/backup-now',{method:'POST'});V.adm.data=await api('/admin/overview');V.smsg={ok:true,t:'Yedek alındı.'}}catch(e){V.smsg={ok:false,t:errMsg(e)}}render()},
   sys(){V.sys.open=!V.sys.open;render();if(V.sys.open)loadSys(false)}, // önce paneli çiz, veri bayatsa arkadan yenile
   sysrefresh(){loadSys(true)},
   range(ds){V.range=+ds.n;render()},

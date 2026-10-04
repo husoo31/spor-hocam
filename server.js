@@ -235,6 +235,45 @@ setInterval(() => {
   } catch (e) { console.error('temizlik hatası', e.message); }
 }, 3600000).unref();
 
+/* ------------------------------------------------------------------ otomatik yedek
+   SQLite'ın VACUUM INTO komutu, yazma sürerken bile tutarlı bir kopya üretir (dosyayı elle kopyalamak WAL yüzünden bozuk yedek verebilir).
+   Her yedek açılıp bütünlük denetiminden geçirilir; yalnızca geçenler saklanır. Eskiler döndürülür. */
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const BACKUP_KEEP = Math.max(3, Number(env.BACKUP_KEEP) || 14), BACKUP_EVERY_H = Number(env.BACKUP_EVERY_HOURS) || 24;
+fs.mkdirSync(BACKUP_DIR, { recursive: true });
+const BACKUP_RE = /^spor-\d{8}-\d{4}\.db$/;
+const listBackups = () => fs.readdirSync(BACKUP_DIR).filter(f => BACKUP_RE.test(f)).sort();
+function backupInfo() {
+  const l = listBackups(), f = l[l.length - 1];
+  if (!f) return { count: 0, last: null };
+  const st = fs.statSync(path.join(BACKUP_DIR, f));
+  return { count: l.length, last: { file: f, at: st.mtimeMs, bytes: st.size } };
+}
+function runBackup() {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 13);
+  const file = path.join(BACKUP_DIR, `spor-${stamp}.db`), tmp = file + '.tmp';
+  try { fs.unlinkSync(tmp); } catch (e) { /* yok */ }
+  db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+  const chk = new DatabaseSync(tmp, { readOnly: true });
+  try {
+    const r = chk.prepare('PRAGMA integrity_check').get();
+    if (!r || r.integrity_check !== 'ok') throw new Error('bütünlük denetimi başarısız');
+    chk.prepare('SELECT COUNT(*) AS n FROM users').get(); // tablo okunabiliyor mu
+  } catch (e) { chk.close(); try { fs.unlinkSync(tmp); } catch (x) { /* yok */ } throw e; }
+  chk.close();
+  fs.renameSync(tmp, file);
+  for (const old of listBackups().slice(0, -BACKUP_KEEP)) { try { fs.unlinkSync(path.join(BACKUP_DIR, old)); } catch (e) { /* yok */ } }
+  return backupInfo().last;
+}
+function backupIfDue() {
+  try {
+    const { last } = backupInfo();
+    if (!last || Date.now() - last.at > BACKUP_EVERY_H * 3600000) { const r = runBackup(); console.log(`[yedek] ${r.file} (${r.bytes} bayt)`); }
+  } catch (e) { console.error('[yedek] HATA', e.message); }
+}
+setTimeout(backupIfDue, Number(env.BACKUP_DELAY_MS) || 30000).unref();
+setInterval(backupIfDue, Number(env.BACKUP_CHECK_MS) || 3600000).unref();
+
 function clientIp(req) {
   if (TRUST_PROXY) {
     const xff = String(req.headers['x-forwarded-for'] || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -550,7 +589,9 @@ async function probe(id, name, check) {
   try {
     const r = await check();
     if (r.off) return { id, name, state: 'off', ms: null, detail: r.off };
-    return done(r.ok ? 'ok' : 'down', r.detail || '');
+    const d = done(r.ok ? 'ok' : 'down', r.detail || '');
+    if (r.noMs) d.ms = null;
+    return d;
   } catch (e) {
     return done('down', e && e.name === 'TimeoutError' ? 'zaman aşımı (8 sn)' : 'bağlanılamadı');
   }
@@ -563,6 +604,12 @@ const httpOk = async (url, headers) => {
 async function runStatus() {
   const items = await Promise.all([
     probe('db', 'Sunucu ve veritabanı', async () => { db.prepare('SELECT 1').get(); return { ok: true, detail: 'çalışıyor' }; }),
+    probe('backup', 'Veritabanı yedeği (günlük)', async () => {
+      const b = backupInfo();
+      if (!b.last) return { ok: false, detail: 'henüz yedek yok', noMs: true };
+      const ageH = (Date.now() - b.last.at) / 3600000, when = ageH < 1 ? Math.max(1, Math.round(ageH * 60)) + ' dk' : Math.round(ageH) + ' sa';
+      return { ok: ageH < BACKUP_EVERY_H + 6, detail: `son yedek ${when} önce, ${Math.round(b.last.bytes / 1024)} KB, ${b.count} yedek saklanıyor`, noMs: true };
+    }),
     probe('local', 'Yerel besin tablosu (yedek)', async () => { const st = localFoods.stats(); return { ok: st.foods > 1000, detail: `${st.foods} besin, ${st.aliases} Türkçe eşleme` }; }),
     probe('gemini', 'Gemini (yapay zekâ)', async () => !env.GEMINI_API_KEY ? { off: 'anahtar tanımlı değil' }
       : httpOk(`${GEMINI_BASE}/models?pageSize=1`, { 'x-goog-api-key': env.GEMINI_API_KEY })),
@@ -656,14 +703,19 @@ async function handleAdmin(req, res, p, m, cu, ip) {
         status: !r.active ? 'iptal' : r.expires && r.expires < now ? 'süresi doldu' : r.max_uses && r.uses >= r.max_uses ? 'doldu' : 'geçerli' })),
       masterInvite: !!env.INVITE_CODE,
       settings: { registration: getSetting('registration'), aiUserLimit: Number(getSetting('ai_user_limit')), aiGlobalLimit: Number(getSetting('ai_global_limit')), maxUsers: Number(getSetting('max_users')), showAccessLog: getSetting('show_access_log') === 'true' },
+      backup: backupInfo(),
       stats: { users: users.length, aiToday: q.usageSum.get(day).n, aiCache: q.cacheCount.get().n, foodCache: q.foodCacheCount.get().n, dbBytes: dbBytes() },
       system: {
-        chain: CHAINS.default.map(c => c.provider + ':' + c.model), geminiKey: !!env.GEMINI_API_KEY, openrouterKey: !!env.OPENROUTER_API_KEY, nvidiaKey: !!env.NVIDIA_API_KEY, usdaKey: ref.usdaEnabled(),
+        chain: CHAINS.default.map(c => c.provider + ':' + c.model), geminiKey: !!env.GEMINI_API_KEY, openrouterKey: !!env.OPENROUTER_API_KEY, nvidiaKey: !!env.NVIDIA_API_KEY, groqKey: !!env.GROQ_API_KEY, cerebrasKey: !!env.CEREBRAS_API_KEY, mistralKey: !!env.MISTRAL_API_KEY, usdaKey: ref.usdaEnabled(),
         registrationEffective: regMode(), tz: TZ,
       },
     });
   }
 
+  if (p === '/api/admin/backup-now' && m === 'POST') {
+    try { const r = runBackup(); return send(res, 200, { ok: true, last: r, count: backupInfo().count }); }
+    catch (e) { throw new HttpError(500, 'backup_failed', 'Yedek alınamadı: ' + e.message); }
+  }
   if (p === '/api/admin/log' && m === 'GET') {
     return send(res, 200, { log: q.logRecent.all().map(r => ({ ts: r.ts, action: r.action, admin: r.admin || '—', target: r.target || null, detail: r.detail ? JSON.parse(r.detail) : null })) });
   }
