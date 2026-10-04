@@ -8,6 +8,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createRefDb, pickBest } from './refdb.js';
+import { createLocalFoods } from './localfoods.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const env = process.env;
@@ -166,6 +167,8 @@ const refCache = {
   put(key, value) { q.fcPut.run(key, JSON.stringify(value === undefined ? null : value), Date.now()); },
 };
 const ref = createRefDb({ env, cache: refCache });
+// Yapay zekâ ve USDA/OFF çökse bile çalışan yerel besin tablosu (USDA SR Legacy kopyası)
+const localFoods = createLocalFoods({ file: path.join(__dirname, 'localdata', 'foods.json') });
 function tx(fn) {
   db.exec('BEGIN');
   try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
@@ -508,6 +511,7 @@ const httpOk = async (url, headers) => {
 async function runStatus() {
   const items = await Promise.all([
     probe('db', 'Sunucu ve veritabanı', async () => { db.prepare('SELECT 1').get(); return { ok: true, detail: 'çalışıyor' }; }),
+    probe('local', 'Yerel besin tablosu (yedek)', async () => { const st = localFoods.stats(); return { ok: st.foods > 1000, detail: `${st.foods} besin, ${st.aliases} Türkçe eşleme` }; }),
     probe('gemini', 'Gemini (yapay zekâ)', async () => !env.GEMINI_API_KEY ? { off: 'anahtar tanımlı değil' }
       : httpOk(`${GEMINI_BASE}/models?pageSize=1`, { 'x-goog-api-key': env.GEMINI_API_KEY })),
     probe('openrouter', 'OpenRouter (yedek yapay zekâ)', async () => !env.OPENROUTER_API_KEY ? { off: 'anahtar tanımlı değil' }
@@ -834,6 +838,12 @@ async function handleApi(req, res, url) {
   }
 
   if (p === '/api/status' && m === 'GET') return handleStatus(req, res);
+  if (p === '/api/offline-estimate' && m === 'POST') {
+    const b = await readBody(req, 20000);
+    const text = typeof b.text === 'string' ? b.text.slice(0, 2000) : '';
+    if (!text.trim()) throw new HttpError(400, 'bad_request', 'Metin boş.');
+    return send(res, 200, localFoods.estimate(text));
+  }
   if (p === '/api/lookup' && m === 'POST') return handleLookup(req, res, user);
   const bm = p.match(/^\/api\/barcode\/(\d{8,14})$/);
   if (bm && m === 'GET') {

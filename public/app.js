@@ -1316,6 +1316,21 @@ function toPreviewSupp(i){
   return {name:String(i.name),dose:String(i.dose||'1 doz'),conf:i.conf||'orta',basis:i.basis||'',note:String(i.note||''),flags:c.flags,n:c.n,other};
 }
 
+/* ---------- yedek mod: yapay zekâ yokken yerel besin tablosu ---------- */
+async function offlineFallback(txt,err,nImg){
+  if(!txt||!err||['network','unauthorized','bad_request'].includes(err.code))return null;
+  V.busyMsg='Yapay zekâ yanıt vermedi, yerel besin tablosu deneniyor…';render();
+  let r;try{r=await api('/offline-estimate',{method:'POST',body:{text:txt}})}catch(e){return null}
+  if(!r||!r.items||!r.items.length){
+    V.err=`Yapay zekâ şu an yanıt vermiyor ve yazdıkların yerel besin tablosunda bulunamadı${r&&r.unmatched&&r.unmatched.length?' ('+r.unmatched.join(', ')+')':''}. Yiyeceği elle girebilirsin.`;
+    return null;
+  }
+  const notes=['Yapay zekâ şu an yanıt vermediği için yazdıklarını yerel besin tablosundan (USDA) YAKLAŞIK hesapladım. Porsiyonlar varsayımdır; miktarı düzeltmeyi unutma.'];
+  if(r.unmatched&&r.unmatched.length)notes.push('Tabloda bulunamadı, listeye eklenmedi: '+r.unmatched.join(', ')+'. Bunları elle ekleyebilirsin.');
+  if(nImg)notes.push('Bu modda fotoğraflar kullanılamaz; yalnızca yazdıkların hesaplandı.');
+  return {items:r.items.map(i=>({...i,basis:'USDA'})),notes};
+}
+
 /* ---------- eylemler ---------- */
 const A={
   tab(ds){V.tab=ds.t;if(ds.st)V.st=ds.st;V.undo=null;window.scrollTo(0,0);render()},
@@ -1369,7 +1384,12 @@ const A={
         }catch(e){notes.push('Doğrulama adımı tamamlanamadı; ilk hesap gösteriliyor.')}
       }
       V.preview=items.map(toPreviewFood);V.pnotes=notes;
-    }catch(e){V.err=errMsg(e)}
+    }catch(e){
+      // Yapay zekâ çalışmıyorsa: yazılan metni yerel besin tablosundan (USDA kopyası) yaklaşık hesapla
+      const fb=await offlineFallback(txt,e,imgs.length);
+      if(fb){V.preview=fb.items.map(toPreviewFood);V.pnotes=fb.notes;V.err=''}
+      else V.err=V.err||errMsg(e);
+    }
     V.busy=false;render();
   },
   palt(ds){
