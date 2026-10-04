@@ -21,7 +21,7 @@ const TZ = env.AI_TZ || 'Europe/Istanbul';
 const GEMINI_BASE = (env.GEMINI_BASE || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '');
 const OPENROUTER_BASE = (env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
 const NVIDIA_BASE = (env.NVIDIA_BASE || 'https://integrate.api.nvidia.com/v1').replace(/\/$/, '');
-const DEFAULT_CHAIN = 'gemini:gemini-3-flash-preview,gemini:gemini-2.5-flash,gemini:gemini-2.5-flash-lite';
+const DEFAULT_CHAIN = 'gemini:gemini-3.5-flash,gemini:gemini-3.5-flash-lite,gemini:gemini-3.1-flash-lite';
 const CHAINS = {
   default: parseChain(env.AI_CHAIN || DEFAULT_CHAIN),
   quick: parseChain(env.AI_CHAIN_QUICK || env.AI_CHAIN || DEFAULT_CHAIN),
@@ -271,7 +271,7 @@ function backupIfDue() {
     if (!last || Date.now() - last.at > BACKUP_EVERY_H * 3600000) { const r = runBackup(); console.log(`[yedek] ${r.file} (${r.bytes} bayt)`); }
   } catch (e) { console.error('[yedek] HATA', e.message); }
 }
-setTimeout(backupIfDue, Number(env.BACKUP_DELAY_MS) || 30000).unref();
+setTimeout(backupIfDue, Number(env.BACKUP_DELAY_MS) || 5000).unref();
 setInterval(backupIfDue, Number(env.BACKUP_CHECK_MS) || 3600000).unref();
 
 function clientIp(req) {

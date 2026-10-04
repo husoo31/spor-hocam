@@ -1,5 +1,5 @@
 // Spor Hocam servis çalışanı: arayüzü önbelleğe alır (çevrimdışı açılır), API isteklerine dokunmaz.
-const CACHE = 'sh-shell-v4';
+const CACHE = 'sh-shell-v5';
 const SHELL = ['/', '/app.js', '/barcode-util.js', '/style.css', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', e => {

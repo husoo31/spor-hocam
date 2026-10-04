@@ -44,8 +44,9 @@ try {
   ok((await call('POST', '/api/register', { username: 'sttest', password: 'Zx9!kLmQ2pRtV7', invite: 'k' })).s === 200, 'kayıt oluşturuldu');
   const r = await call('GET', '/api/status');
   const by = id => (r.j.items || []).find(i => i.id === id) || {};
-  ok(r.s === 200 && Array.isArray(r.j.items) && r.j.items.length === 7, 'yedi sistem raporlandı');
+  ok(r.s === 200 && Array.isArray(r.j.items) && r.j.items.length === 8, 'sekiz sistem raporlandı (yedek ve yerel tablo dahil)');
   ok(by('db').state === 'ok' && typeof by('db').ms === 'number', 'veritabanı: aktif, ms ölçüldü (' + by('db').ms + ' ms)');
+  ok(by('backup').state === 'ok' || by('backup').state === 'down', 'yedek satırı raporlandı: ' + by('backup').state + ' — ' + by('backup').detail);
   ok(by('local').state === 'ok' && /besin/.test(by('local').detail), 'yerel besin tablosu: hazır (' + by('local').detail + ')');
   ok(by('gemini').state === 'ok' && by('gemini').ms >= 0, 'Gemini: aktif, ms ölçüldü');
   ok(by('openrouter').state === 'down' && /401/.test(by('openrouter').detail), 'OpenRouter: geçersiz anahtar "çalışmıyor" (HTTP 401) olarak gösterildi');

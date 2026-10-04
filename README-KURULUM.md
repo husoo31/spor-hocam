@@ -50,7 +50,7 @@ test/*.test.mjs      testler:  node test/server.test.mjs, test/ref.test.mjs, tes
 ## 4) Yapay zekâ modeli ve maliyet
 `AI_CHAIN` soldan sağa denenir; ilk model hata verirse ya da ücretsiz kotası dolarsa sıradakine geçilir:
 ```
-AI_CHAIN=gemini:gemini-3-flash-preview,gemini:gemini-2.5-flash,gemini:gemini-2.5-flash-lite
+AI_CHAIN=gemini:gemini-3.5-flash,gemini:gemini-3.5-flash-lite,gemini:gemini-3.1-flash-lite
 ```
 - **Model adlarını doğrula** (Google adları değiştirir): `python test_models.py --key ANAHTAR --list`
 - Gemini 3.8 Flash denemek için: `gemini:gemini-3.8-flash` (ücretsiz katman günlük limiti çok düşük olabilir, ücretli fiyat 1 Ocak 2027'de iki katına çıkıyor).
@@ -100,6 +100,19 @@ Sınırlar: USDA'da Türk yemekleri yoktur, onlar yapay zekâ tahmini + senin "�
 ## 7) Güncelleme ve yedek
 - **Güncelleme:** kodu GitHub'a gönder → Coolify'da *Redeploy* (ya da otomatik deploy aç). Veriler volume'da kalır.
 - **Yedek:** her kullanıcı *Ayarlar → Veri → Yedeği indir* ile kendi verisini JSON olarak alabilir. Sunucu tarafı için `/data/spor.db` dosyasını (volume `spor-data`) düzenli kopyala.
+
+## 7b) Kesintisizlik: bir şey bozulduğunda ne olur
+| Arıza | Ne olur |
+|---|---|
+| Bir yapay zekâ modeli kapanır / kotası dolar / yanıt vermez | Zincirdeki sıradaki modele geçilir. Bozuk model 1 dk–6 saat arası **geçici dışlanır** (devre kesici), her istekte zaman kaybettirmez. Fotoğrafsız bekleme en fazla 35 sn. Durum panelinde "Yapay zekâ sırası" görünür. |
+| Gemini tamamen düşer | OpenRouter / Groq / Cerebras / Mistral / NVIDIA yedekleri (anahtarları tanımlıysa). Anahtar eklemek için ilgili `*_API_KEY` ve `AI_CHAIN`. |
+| **Tüm yapay zekâ servisleri** düşer | Uygulama yazdığını **yerel besin tablosundan** (USDA SR Legacy kopyası, 7793 besin, internetsiz) yaklaşık hesaplar. Tabloda olmayan yemeği (menemen, lahmacun…) **uydurmaz**, "bulunamadı" der. |
+| USDA / Open Food Facts çöker | Yerel tablo ve 30 günlük önbellek devreye girer. |
+| Uygulama takılır / sağlıksız olur | `ops/spor-watchdog.sh` (cron, dakikada bir) yalnızca bu konteyneri yeniden başlatır. Konteyner yoksa ya da dışarıdan erişilemiyorsa kaydeder (Coolify/Traefik'e dokunmaz). |
+| Veri kaybı | Veritabanı günde bir **doğrulanmış** (bütünlük denetimli) yedeklenir, son 14 yedek konteynerde; `ops/spor-backup-sync.sh` (cron, 04:15) bunları sunucu diskine (`~/spor-backups`, son 30) kopyalar. Yönetici panelinde "Şimdi yedekle". |
+
+**Geri yükleme:** uygulamayı durdur, yedeği `/data/spor.db` olarak koy (`spor.db-wal` ve `spor.db-shm` dosyalarını sil), uygulamayı başlat.
+**Sınırlar:** yedekler aynı sunucuda durur; sunucu/disk tümden giderse kaybolur. Gerçek felaket koruması için `~/spor-backups` klasörünü düzenli olarak başka bir yere (bilgisayarın, bulut depolama) kopyala. Tek sunucu olduğu için sunucunun kendisi çökerse hizmet durur.
 
 ## 8) Sorun giderme
 | Belirti | Çözüm |
