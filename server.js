@@ -450,8 +450,8 @@ async function callNvidia(model, prompt, images, wantJson, timeout) {
 const PROVIDERS = { gemini: callGemini, openrouter: callOpenAICompat('openrouter'), groq: callOpenAICompat('groq'), cerebras: callOpenAICompat('cerebras'),
   mistral: callOpenAICompat('mistral'), nvidia: callNvidia };
 const KEY_ENV = { gemini: 'GEMINI_API_KEY', openrouter: 'OPENROUTER_API_KEY', groq: 'GROQ_API_KEY', cerebras: 'CEREBRAS_API_KEY', mistral: 'MISTRAL_API_KEY', nvidia: 'NVIDIA_API_KEY' };
-// Fotoğraf okuyabilir mi? Gemini/OpenRouter/Mistral evet; NVIDIA DeepSeek ve Cerebras hayır; Groq yalnızca görüntü destekli modellerde (scout/maverick/vision)
-const canImage = e => !['nvidia', 'cerebras'].includes(e.provider) && (e.provider !== 'groq' || /scout|maverick|vision|llava/i.test(e.model));
+// Fotoğraf okuyabilir mi? Gemini/OpenRouter/Mistral evet; NVIDIA DeepSeek ve Cerebras hayır; Groq yalnızca görüntü destekli modellerde (scout/maverick/vision/qwen3.5+; gpt-oss metin modelidir)
+const canImage = e => !['nvidia', 'cerebras'].includes(e.provider) && (e.provider !== 'groq' || /scout|maverick|vision|llava|qwen\/qwen3\.[5-9]/i.test(e.model));
 const aiEnabled = () => Object.values(CHAINS).some(ch => ch.some(e => PROVIDERS[e.provider] && env[KEY_ENV[e.provider]]));
 
 /* ---- devre kesici: bozuk bir model her istekte zaman kaybettirmesin ----

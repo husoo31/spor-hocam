@@ -37,7 +37,7 @@ const srv = spawn('node', ['--disable-warning=ExperimentalWarning', 'server.js']
   cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
   env: { ...process.env, PORT: APP, DATA_DIR: dir, INVITE_CODE: 'k', GEMINI_API_KEY: 'g', GEMINI_BASE: `http://127.0.0.1:${MOCK}/v1beta`,
     GROQ_API_KEY: 'groq-test', GROQ_BASE: `http://127.0.0.1:${MOCK}/groq`, AI_FAST_TIMEOUT_MS: '1500', AI_DAILY_LIMIT_PER_USER: '500', AI_DAILY_LIMIT_GLOBAL: '5000',
-    AI_CHAIN: 'gemini:dead,gemini:limited,gemini:good,groq:llama-test,groq:llama-4-scout-test', AI_CHAIN_QUICK: 'gemini:hang,gemini:good' },
+    AI_CHAIN: 'gemini:dead,gemini:limited,gemini:good,groq:llama-test,groq:qwen/qwen3.8-27b,groq:llama-4-scout-test', AI_CHAIN_QUICK: 'gemini:hang,gemini:good' },
 });
 let log = ''; srv.stdout.on('data', d => log += d); srv.stderr.on('data', d => log += d);
 for (let i = 0; i < 100; i++) { try { if ((await fetch(`http://127.0.0.1:${APP}/api/health`)).ok) break; } catch (e) { /* bekle */ } await new Promise(r => setTimeout(r, 100)); }
@@ -69,6 +69,7 @@ try {
   ok(by('gemini:dead').state === 'bekliyor' && /404/.test(by('gemini:dead').reason), 'durum: gemini:dead "bekliyor" (HTTP 404)');
   ok(by('gemini:limited').state === 'bekliyor' && by('gemini:limited').seconds > 30, 'durum: gemini:limited 429 sonrası ~1 dk bekliyor (' + by('gemini:limited').seconds + ' sn)');
   ok(by('gemini:good').state === 'hazır', 'durum: gemini:good hazır');
+  ok(by('groq:openai/gpt-oss-120b').image !== true && by('groq:qwen/qwen3.8-27b').image === true, 'Groq: qwen3.8 görüntü destekli, gpt-oss metin modeli olarak sınıflandı');
   ok(by('groq:llama-test').image === false && by('groq:llama-4-scout-test').image === true, 'Groq: yalnızca "scout" gibi görüntü destekli model fotoğraf alır');
   ok(st.j.items.some(i => i.id === 'groq' && i.state === 'ok'), 'Groq anahtarı tanımlıyken durum panelinde görünüyor ve aktif');
   // 4) hepsi çökerse Groq devralır
@@ -79,7 +80,7 @@ try {
   // 5) görselli istek: yalnızca görüntü destekli modeller denenir
   const gb = hits.groq;
   r = await ai({ images: [{ mime: 'image/png', data: png }] });
-  ok(r.s === 200 && r.j.json.model === 'llama-4-scout-test' && hits.groq === gb + 1, 'fotoğraflı istek: yalnız görüntü destekli Groq modeline gitti (metin modeli atlandı)');
+  ok(r.s === 200 && r.j.json.model === 'qwen/qwen3.8-27b' && hits.groq === gb + 1, 'fotoğraflı istek: yalnız görüntü destekli Groq modeline gitti (metin modeli atlandı)');
   // 6) kurtarma: Gemini düzelince süre dolunca yeniden denenir; hepsi dışlıyken yine de denenir
   goodMode = 'ok';
   const g0 = hits.good;
