@@ -10,7 +10,7 @@ public/              arayüz, manifest, servis çalışanı, ikonlar
 Dockerfile           Coolify bu dosyayla derler (ARM64 ve AMD64 uyumlu)
 .env.example         ortam değişkenleri örneği
 refdb.js            USDA + Open Food Facts araması, birim dönüşümü, eşleştirme
-test/*.test.mjs      testler:  node test/server.test.mjs, test/ref.test.mjs, test/admin.test.mjs
+test/*.test.mjs      testler:  node test/server.test.mjs, test/ref.test.mjs, test/admin.test.mjs, test/persist.test.mjs, test/health.test.mjs
 ```
 
 ## 1) GitHub'a yükle
@@ -71,6 +71,16 @@ Yemek hesaplaması üç katmanlı çalışır; yapay zekâ değerleri uydurmak y
 
 Sınırlar: USDA'da Türk yemekleri yoktur, onlar yapay zekâ tahmini + senin "Ürünlerim" kayıtlarınla gelir. Open Food Facts topluluk verisidir; eksik ya da hatalı kayıt olabilir, bu yüzden önizlemede "etiketle karşılaştır" uyarısı çıkar. Referanstan gelen kalemlerde kaynakta olmayan vitamin/mineral sayısı gösterilir; o değerler toplamlara dahil edilmez (tahmin yürütülmez). Aramalar sunucuda 30 gün önbelleğe alınır; Open Food Facts'in dakikadaki istek sınırına uyulur.
 
+### Apple Sağlık ile yakılan kalori (iPhone)
+Safari/PWA iPhone'un Sağlık verisini doğrudan okuyamaz; bu yüzden iPhone'un **Kısayollar** uygulaması her gün aktif enerjiyi sunucuya gönderir.
+- **Kullanım:** Bugün ekranındaki **🔄 Sağlık'tan çek** düğmesi (yalnızca iPhone/iPad'de görünür) `shortcuts://run-shortcut?name=Spor%20Hocam%20Saglik` ile iPhone'daki aynı adlı kısayolu çalıştırır. Kısayol Sağlık'tan okuyup aşağıdaki isteği sunucuya gönderir; uygulamaya dönünce değer kendiliğinden güncellenir. Telefon açıkken çalıştığı için kilitli telefon sorunu olmaz.
+- **Kurulum (bir kez):** *Ayarlar → Sağlık → Anahtar üret*, sonra aynı sayfadaki adımlarla Kısayollar'da `Spor Hocam Saglik` adlı kısayolu oluştur (Sağlık Örneklerini Bul → İstatistikleri Hesapla → Tarihi Biçimlendir → URL İçeriklerini Al). İstersen aynı kısayolu günlük otomasyona da bağlayabilirsin.
+- **Gönderilen istek:** `POST https://SENIN-ALAN/api/health-sync`, başlık `Authorization: Bearer ANAHTAR`, gövde `{"kcal": 300, "date": "2026-10-06", "steps": 8200}`. `date` ve `steps` isteğe bağlıdır; tarih son 7 gün içinde olabilir.
+- **Hesap:** Bugün ekranında net kalori = yenen − yakılan; kalan kalori = hedef − net. Analiz sekmesi, hedefe uyum ve koç yorumu da yakılan kaloriyi hesaba katar.
+- **Çift sayım uyarısı:** Profildeki aktivite düzeyi hedefe zaten günlük hareket payı ekler. *Ayarlar → Sağlık → Hedefi hareketsiz bazdan hesapla* açılınca *Hedeflerimi hesapla* aktivite çarpanını 1,2 alır; yakılan kalori ayrıca eklenir. Elle değiştirdiğin hedef yeniden hesaplamada ezilir, bu yüzden otomatik uygulanmaz.
+- **Elle giriş:** Bugün ekranında 🔥 düğmesiyle girilir. Elle girilen değer otomatik gelen veriyle ezilmez; silince otomatik veri yine yazabilir.
+- **Sınırlar:** iPhone kilitliyken Sağlık verisi okunamaz ve kısayol 0 gönderebilir; sunucu 0'ı yok sayar ve dolu değeri korur. Anahtar sunucuda yalnızca özet (hash) olarak saklanır; kaybedersen yenisini üret. Yanlış anahtar denemeleri sınırlanır. Yakılan kalori verisi kullanıcının `health` kaydında durur, yedeğe ve veritabanı yedeğine dahildir (JSON kullanıcı yedeğine dahil değildir).
+
 ## 6) Yönetici paneli
 **Kim yönetici?** Siteye ilk kayıt olan hesap otomatik yönetici olur (davet kodu olarak `INVITE_CODE` ile). Bu yüzden siteyi yayınladıktan hemen sonra ilk hesabı sen aç. Yönetici olunca *Ayarlar → Yönetim* sekmesi görünür.
 
@@ -95,7 +105,12 @@ Sınırlar: USDA'da Türk yemekleri yoktur, onlar yapay zekâ tahmini + senin "�
 
 ## 7) Güncelleme ve yedek
 - **Güncelleme:** kodu GitHub'a gönder → Coolify'da *Redeploy* (ya da otomatik deploy aç). Veriler volume'da kalır.
-- **Yedek:** her kullanıcı *Ayarlar → Veri → Yedeği indir* ile kendi verisini JSON olarak alabilir. Sunucu tarafı için `/data/spor.db` dosyasını (volume `spor-data`) düzenli kopyala.
+- **Güncelleme verileri silmez:** kod hiçbir tabloyu baştan oluşturmaz; şema değişiklikleri yalnızca "yoksa ekle" biçimindedir. Silinen tek şey süresi dolmuş oturumlar ve eski önbellekler. Kullanıcı verisi yalnızca kullanıcı ya da yönetici kendisi silerse silinir.
+- **Volume koruması:** `/data` kalıcı bir volume değilse (yani güncelleme verileri götürecekse) sunucu, veritabanı yokken **başlamayı reddeder** ve günlüğe `DURDURULDU: ... kalıcı bir volume değil` yazar. Veritabanı varsa açılır ama günlükte `UYARI` verir. Bilerek geçici kullanacaksan `ALLOW_EPHEMERAL_DATA=true`. (Yalnızca Docker/Linux'ta çalışır.)
+- **Otomatik yedek:** sunucu her açılışta (şema değişikliğinden önce) ve her 24 saatte bir `/data/backups/` içine tutarlı bir kopya alır: açılış yedeklerinden son 5, günlük yedeklerden son 14 tane tutulur (`BACKUP_KEEP_START`, `BACKUP_KEEP_DAILY`). Boş veritabanı yedeklenmez. Bu yedekler **aynı volume'da** durur; bozuk güncellemeye ve hatalı şema değişikliğine karşı korur, volume'un kendisinin silinmesine karşı korumaz. Onun için `/data/backups/` içindeki dosyaları ara sıra başka bir yere indir (Coolify'ın kendi volume yedeği ya da Hetzner/sunucu snapshot'ı da olur).
+- **Yönetici panelinden indirme:** *Ayarlar → Yönetim → Sistem → Veritabanı yedeği* tüm veritabanının anlık kopyasını `.db` dosyası olarak indirir. Dosya tüm kullanıcıların verilerini ve şifre özetlerini içerir; bu yüzden yalnızca yönetici indirebilir, yönetici şifresi yeniden istenir ve işlem *Yönetim → Kayıt* sekmesine yazılır. Volume silinse bile elinde kalması için bunu ara sıra indirip güvenli bir yere koy.
+- **Yedekten dönmek:** uygulamayı durdur, `/data/backups/` içindeki dosyayı `/data/spor.db` olarak kopyala (eski `spor.db-wal` ve `spor.db-shm` dosyalarını sil), uygulamayı başlat.
+- **Kullanıcı yedeği:** her kullanıcı *Ayarlar → Veri → Yedeği indir* ile kendi verisini JSON olarak alabilir.
 
 ## 8) Sorun giderme
 | Belirti | Çözüm |
@@ -107,7 +122,8 @@ Sınırlar: USDA'da Türk yemekleri yoktur, onlar yapay zekâ tahmini + senin "�
 | Giriş yapınca hemen atıyor | HTTPS/alan adı sorunu; siteyi `https://` ile açtığından emin ol |
 | Hesaplamada "📚 USDA" satırı hiç çıkmıyor | `USDA_API_KEY` boş; Coolify günlüğünde `Referans veri: USDA açık` yazmalı |
 | Barkod "bulunamadı" diyor | Ürün Open Food Facts'te yok; besin etiketinin fotoğrafını ekleyerek hesaplat |
-| Güncelleme sonrası veriler gitmiş | `/data` için kalıcı depolama (volume) eklenmemiş |
+| Güncelleme sonrası veriler gitmiş | `/data` için kalıcı depolama (volume) eklenmemiş; önce `/data/backups/` içine bak |
+| Günlükte "DURDURULDU: ... kalıcı bir volume değil" | Coolify → Persistent Storage'a `/data` volume'u ekle, yeniden deploy et |
 | Ana ekrana ekle çıkmıyor | HTTPS gerekir; sertifika alınmamış olabilir |
 
 ## Telefon uyumluluğu

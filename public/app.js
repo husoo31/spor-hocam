@@ -84,6 +84,31 @@ let V={tab:'today',date:TODAY,food:'',mealType:hr<11?'Kahvaltı':hr<16?'Öğle':
 
 /* ---------- depolama: veritabanı (db, parçalı) + cihaz yedeği ---------- */
 let col=null,dbErr=false,LSKEY='spor-hocam';
+/* yakılan kalori (Apple Sağlık / elle): sunucuda ayrı bir kayıtta; HB = { 'YYYY-MM-DD': {kcal, steps?, src} } */
+let HB={},HS={enabled:false,last:null};
+const burnOf=d=>num((HB[d]||{}).kcal);
+async function loadBurn(){
+  try{
+    const j=await api('/burn');HB=j.days||{};HS=j.sync||{enabled:false,last:null};
+    try{localStorage.setItem(LSKEY+':burn',JSON.stringify({HB,HS}))}catch(e){}
+    return true;
+  }catch(e){
+    try{const c=JSON.parse(localStorage.getItem(LSKEY+':burn')||'null');if(c){HB=c.HB||{};HS=c.HS||HS}}catch(x){}
+    return false;
+  }
+}
+/* "Sağlık'tan çek" düğmesi: iPhone'daki Kısayollar uygulamasındaki bu adlı kısayolu çalıştırır; kısayol Sağlık'tan okuyup sunucuya gönderir */
+const SC_NAME='Spor Hocam Saglik';
+const isIOS=()=>/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+let pullAt=0;
+async function burnRefresh(){
+  const before=JSON.stringify(HB);
+  const ok=await loadBurn();
+  if(!ok||JSON.stringify(HB)===before)return false;
+  if(pullAt&&Date.now()-pullAt<600000){pullAt=0;toast('Yakılan kalori güncellendi: '+r0(burnOf(TODAY))+' kcal')}
+  if(!V.burnEdit)render();
+  return true;
+}
 const chunkN={};
 function coreObj(){
   const o={profile:S.profile,goals:S.goals,supps:S.supps,lib:S.lib,prefs:S.prefs,programs:S.programs,active:S.active};
@@ -191,7 +216,12 @@ async function flush(){
   if(again){again=false;if(dirty.size){clearTimeout(pt);pt=setTimeout(flush,200)}}
 }
 addEventListener('pagehide',()=>{clearTimeout(pt);flush()});
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){clearTimeout(pt);flush()}});
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='hidden'){clearTimeout(pt);flush()}
+  else if(AUTH.cur&&col&&!dbErr){ // uygulamaya dönünce kısayoldan gelmiş yakılan kaloriyi al; kısayol hâlâ çalışıyorsa birkaç kez daha dene
+    burnRefresh().then(changed=>{if(!changed&&pullAt&&Date.now()-pullAt<600000){setTimeout(burnRefresh,2500);setTimeout(burnRefresh,6000)}});
+  }
+});
 
 const mon=d=>{const k=d.slice(0,7);const m=S.months[k]??(S.months[k]={});m.days=m.days||{};m.workouts=m.workouts||{};return m};
 const getDay=d=>{const m=mon(d);const x=m.days[d]??(m.days[d]={});if(!Array.isArray(x.meals))x.meals=[];return x};
@@ -220,11 +250,13 @@ const waterSum=d=>(getDayRO(d).water||[]).reduce((a,b)=>a+num(b),0);
 const waterGoal=()=>S.goals.water||r0(num(S.profile.weight)*35/50)*50||2500;
 
 /* ---------- hedef hesabı ---------- */
+// Yakılan kalori ayrıca eklendiği için (Apple Sağlık), "hareketsiz baz" seçiliyse aktivite çarpanı 1,2 alınır; aksi hâlde aktivite iki kez sayılırdı
+const BASE_ACT=1.2;
 function calcGoals(){
   const p=S.profile,w=num(p.weight),h=num(p.height),a=num(p.age);
   if(!w||!h||!a)return false;
   const bmr=10*w+6.25*h-5*a+(p.sex==='m'?5:-161);
-  const tdee=bmr*num(p.act);
+  const tdee=bmr*(S.prefs.burnBase?BASE_ACT:num(p.act));
   const adj=p.goal==='cut'?-Math.min(500,tdee*.2):p.goal==='bulk'?300:0;
   const kcal=Math.max(tdee+adj,bmr);
   const protein=w*(p.goal==='cut'?2:1.8);
@@ -278,7 +310,9 @@ async function enterApp(user){
   AUTH.cur=user;LSKEY='spor-hocam:'+user.id;col=colApi;dbErr=false;
   try{localStorage.setItem('spor-hocam-last',JSON.stringify(user))}catch(e){}
   S=defaultS();Object.keys(chunkN).forEach(k=>delete chunkN[k]);dirty.clear();
+  HB={};HS={enabled:false,last:null};
   await load();
+  await loadBurn();
   applyTheme();
   Object.assign(V,{tab:S.goals.kcal?'today':'settings',st:'profile',date:TODAY,preview:null,pnotes:[],food:'',err:'',edit:null,undo:null,fimgs:[],simgs:[],spreview:null,sedit:null,coach:'',smsg:null,newCode:null,pending:null,aerr:''});
 }
@@ -325,6 +359,23 @@ const FORMS={
     if(!confirm(u.username+' hesabı kalıcı olarak silinecek. Emin misin?'))return;
     await api('/admin/users/'+u.id+'/delete',{method:'POST',body:{adminPassword:String(fd.get('adminPassword')||'')}});
     V.adm.uid=null;V.adm.ud=null;V.adm.data=await api('/admin/overview');V.smsg={ok:true,t:'Hesap silindi.'};
+  },
+  async burn(fd){
+    const raw=String(fd.get('kcal')||'').trim();
+    try{const r=await api('/burn',{method:'POST',body:{date:V.date,kcal:raw===''?null:raw}});HB=r.days||{};V.burnEdit=false;try{localStorage.setItem(LSKEY+':burn',JSON.stringify({HB,HS}))}catch(e){}}
+    catch(e){toast(errMsg(e))}
+  },
+  async adm_backup(fd){
+    let r;
+    try{
+      r=await fetch('/api/admin/backup',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Requested-With':'spor-hocam'},body:JSON.stringify({adminPassword:String(fd.get('adminPassword')||'')})});
+    }catch(e){throw {message:'Sunucuya ulaşılamıyor. İnternet bağlantını kontrol et.'}}
+    if(!r.ok){let j=null;try{j=await r.json()}catch(e){}throw {message:(j&&j.error)||('Sunucu hatası ('+r.status+')')}}
+    const blob=await r.blob(),a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);a.download='spor-hocam-yedek-'+TODAY+'.db';
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),3000);
+    V.adm.data=await api('/admin/overview');V.smsg={ok:true,t:'Yedek indirildi ('+fmtBytes(blob.size)+'). Güvenli bir yerde sakla: tüm kullanıcıların verilerini ve şifre özetlerini içerir.'};
   },
   async adm_invite(fd){
     const r=await api('/admin/invites',{method:'POST',body:{label:String(fd.get('label')||''),maxUses:String(fd.get('maxUses')||'0'),expiresDays:String(fd.get('expiresDays')||'0')}});
@@ -627,7 +678,7 @@ function photoBtn(listKey,inputKey,label){
 const precBtn=()=>`<button class="chip ${S.prefs.precise?'on':''}" data-a="prec" aria-pressed="${!!S.prefs.precise}">🔍 Hassas mod: ${S.prefs.precise?'açık':'kapalı'}</button>`;
 function viewToday(){
   const g=S.goals,d=V.date,t=totals(d),st=suppTotals(d),day=getDayRO(d),meals=day.meals||[];
-  const left=g.kcal-t.kcal,over=left<0,deficit=g.tdee?g.tdee-t.kcal:null;
+  const burn=burnOf(d),bd=HB[d]||{},net=t.kcal-burn,left=g.kcal-net,over=left<0,deficit=g.tdee?g.tdee+burn-t.kcal:null;
   let h=dayNav();
   if(V.undo)h+=`<div class="undo"><span>Silindi: ${esc(V.undo.m.name)}</span><button data-a="mundo">Geri al</button></div>`;
   if(!g.kcal){
@@ -636,9 +687,10 @@ function viewToday(){
     h+=`<div class="card hero">
       <div class="mut small">${over?'Hedefi aştın':'Kalan kalori'}</div>
       <div class="big num ${over?'over':''}">${Math.abs(r0(left)).toLocaleString('tr-TR')}<span class="mut" style="font-size:22px;margin-left:6px">kcal</span></div>
-      <div class="bar"><i style="width:${Math.min(100,t.kcal/g.kcal*100)}%;background:${over?'var(--bad)':'var(--kcal)'}"></i></div>
-      <div class="row between small mut" style="margin-top:8px"><span>Yenen <b class="num" style="color:var(--ink)">${r0(t.kcal)}</b></span><span>Hedef <b class="num" style="color:var(--ink)">${g.kcal}</b></span></div>
-      ${deficit!==null?`<div style="margin-top:12px"><span class="chip">${deficit>=0?'Kalori açığı':'Kalori fazlası'}: <b class="num">${Math.abs(r0(deficit))}</b> kcal <span class="mut">(harcama ~${g.tdee})</span></span></div>`:''}
+      <div class="bar"><i style="width:${Math.max(0,Math.min(100,net/g.kcal*100))}%;background:${over?'var(--bad)':'var(--kcal)'}"></i></div>
+      <div class="row between small mut" style="margin-top:8px"><span>Yenen <b class="num" style="color:var(--ink)">${r0(t.kcal)}</b></span>${burn?`<span>Yakılan <b class="num" style="color:var(--ink)">−${r0(burn)}</b></span><span>Net <b class="num" style="color:var(--ink)">${r0(net)}</b></span>`:''}<span>Hedef <b class="num" style="color:var(--ink)">${g.kcal}</b></span></div>
+      <div style="margin-top:12px">${deficit!==null?`<span class="chip">${deficit>=0?'Kalori açığı':'Kalori fazlası'}: <b class="num">${Math.abs(r0(deficit))}</b> kcal <span class="mut">(harcama ~${r0(g.tdee+burn)})</span></span>`:''}<button class="chip" data-a="burnedit" aria-expanded="${!!V.burnEdit}">🔥 ${burn?`Yakılan ${r0(burn)} kcal · ${bd.src==='manual'?'elle':'Apple Sağlık'}${bd.steps?' · '+Number(bd.steps).toLocaleString('tr-TR')+' adım':''}`:'Yakılan kalori ekle'}</button>${HS.enabled&&isIOS()&&d===TODAY?`<button class="chip" data-a="pullhealth">🔄 Sağlık'tan çek</button>`:''}</div>
+      ${V.burnEdit?`<form data-f="burn" class="row" style="gap:8px;margin-top:10px" autocomplete="off"><input name="kcal" inputmode="numeric" placeholder="Yakılan kcal (aktif enerji)" aria-label="Yakılan kalori" value="${burn?r0(burn):''}"><button class="btn sm">Kaydet</button>${HB[d]?`<button type="button" class="btn alt sm" data-a="burndel">Sil</button>`:''}</form>`:''}
     </div>
     <div class="card grid3">
       ${[['Protein',t.protein,g.protein,'var(--pro)'],['Karb.',t.carbs,g.carbs,'var(--carb)'],['Yağ',t.fat,g.fat,'var(--fat)']].map(([n,v,tg,c])=>`<div class="macro"><div class="mut small">${n}</div><div class="v num">${r0(v)}<span class="mut small"> /${tg}g</span></div>${bar(v/tg*100,c)}</div>`).join('')}
@@ -809,7 +861,7 @@ function lineChart(pts,color,unit){
 
 /* ---------- Analiz hesapları ---------- */
 function rangeData(n){
-  const out=[];for(let i=n-1;i>=0;i--){const d=addDays(TODAY,-i);out.push({d,...totals(d),water:waterSum(d),logged:(getDayRO(d).meals||[]).length>0})}return out;
+  const out=[];for(let i=n-1;i>=0;i--){const d=addDays(TODAY,-i);out.push({d,...totals(d),water:waterSum(d),burn:burnOf(d),logged:(getDayRO(d).meals||[]).length>0})}return out;
 }
 function trend(pts){
   if(pts.length<3)return null;
@@ -834,11 +886,12 @@ function viewStats(){
   const avg=k=>n?lg.reduce((a,x)=>a+x[k],0)/n:0;
   let h=`<div class="seg" style="margin-bottom:12px">${[7,14,30].map(k=>`<button data-a="range" data-n="${k}" class="${V.range===k?'on':''}">${k} gün</button>`).join('')}</div>`;
   h+=`<h2 style="margin-top:0">Beslenme</h2>`;
-  const defSum=g.tdee?lg.reduce((a,x)=>a+(g.tdee-x.kcal),0):0;
-  h+=`<div class="grid2"><div class="card"><div class="mut small">Ort. kalori</div><div class="num" style="font-size:30px;font-weight:700">${n?r0(avg('kcal')):'–'}</div><div class="mut small">${n} gün kayıtlı</div></div>
+  const defSum=g.tdee?lg.reduce((a,x)=>a+(g.tdee+x.burn-x.kcal),0):0;
+  const nb=lg.filter(x=>x.burn>0),anyBurn=rd.some(x=>x.burn>0);
+  h+=`<div class="grid2"><div class="card"><div class="mut small">Ort. kalori</div><div class="num" style="font-size:30px;font-weight:700">${n?r0(avg('kcal')):'–'}</div><div class="mut small">${n} gün kayıtlı${nb.length?` · ort. yakılan ${r0(nb.reduce((a,x)=>a+x.burn,0)/nb.length)}`:''}</div></div>
   <div class="card"><div class="mut small">Ort. protein</div><div class="num" style="font-size:30px;font-weight:700">${n?r0(avg('protein')):'–'}<span class="mut small"> g</span></div><div class="mut small">${num(S.profile.weight)&&n?f1(avg('protein')/num(S.profile.weight))+' g/kg · ':''}hedef ${g.protein||'–'}</div></div></div>`;
   if(g.kcal&&n){
-    const okK=lg.filter(x=>Math.abs(x.kcal-g.kcal)/g.kcal<=.1).length,okP=lg.filter(x=>x.protein>=g.protein*.9).length,under=lg.filter(x=>x.kcal<=g.kcal).length;
+    const okK=lg.filter(x=>Math.abs(x.kcal-x.burn-g.kcal)/g.kcal<=.1).length,okP=lg.filter(x=>x.protein>=g.protein*.9).length,under=lg.filter(x=>x.kcal-x.burn<=g.kcal).length;
     h+=`<div class="card"><h3>Hedefe uyum</h3><div style="margin-top:8px"><span class="chip">Kalori hedefi ±%10: <b class="num">${okK}/${n}</b> gün</span><span class="chip">Protein hedefi (≥%90): <b class="num">${okP}/${n}</b> gün</span><span class="chip">Kalori altında: <b class="num">${under}/${n}</b> gün</span></div>
     ${g.tdee?`<div class="mut small" style="margin-top:6px">Toplam ${defSum>=0?'kalori açığı':'fazlası'}: <b class="num" style="color:var(--ink)">${Math.abs(r0(defSum)).toLocaleString('tr-TR')} kcal</b> ≈ ${(Math.abs(defSum)/7700).toFixed(2)} kg yağ eşdeğeri (kabaca)</div>`:''}</div>`;
     h+=`<div class="card"><h3>Ortalama makro dağılımı</h3>${macroSplit({protein:avg('protein'),carbs:avg('carbs'),fat:avg('fat')})}
@@ -846,7 +899,7 @@ function viewStats(){
     const avgT=Object.fromEntries(NK.map(k=>[k,avg(k)])),sts=lg.map(x=>suppTotals(x.d)),avgS=Object.fromEntries(NK.map(k=>[k,sts.reduce((a,s)=>a+s[k],0)/n]));
     h+=`<div class="card"><h3>Ortalama vitamin ve mineraller (günlük)</h3>${nGroups(avgT,avgS)}<p class="note">Kayıt girdiğin günlerin ortalaması; takviyeler dahil. Eksik kayıt değerleri düşük gösterir.</p></div>`;
   }
-  h+=`<div class="card"><h3>Günlük kalori</h3>${barChart(rd.map(x=>r0(x.kcal)),rd.map(x=>dshort(x.d)),g.kcal,'var(--kcal)')}</div>`;
+  h+=`<div class="card"><h3>Günlük kalori${anyBurn?' (yenen − yakılan)':''}</h3>${barChart(rd.map(x=>x.logged?Math.max(0,r0(x.kcal-x.burn)):0),rd.map(x=>dshort(x.d)),g.kcal,'var(--kcal)')}</div>`;
   h+=`<div class="card"><h3>Günlük protein</h3>${barChart(rd.map(x=>r0(x.protein)),rd.map(x=>dshort(x.d)),g.protein,'var(--pro)')}</div>`;
   if(n){
     const mt=['Kahvaltı','Öğle','Akşam','Atıştırmalık'],ms={};mt.forEach(k=>ms[k]={k:0,p:0});
@@ -990,16 +1043,49 @@ function setData(){
   h+=`<p class="note">Referans besin verileri: USDA FoodData Central (kamu malı) ve Open Food Facts (ODbL lisanslı topluluk verisi).</p>`;
   return h;
 }
+function kcalFor(act){
+  const p=S.profile,w=num(p.weight),h=num(p.height),a=num(p.age);
+  if(!w||!h||!a)return null;
+  const bmr=10*w+6.25*h-5*a+(p.sex==='m'?5:-161),tdee=bmr*act;
+  return r0(Math.max(tdee+(p.goal==='cut'?-Math.min(500,tdee*.2):p.goal==='bulk'?300:0),bmr));
+}
+function setHealth(){
+  const url=location.origin+'/api/health-sync',key=V.syncKey,kk=key||'ANAHTARIN';
+  const cur=kcalFor(num(S.profile.act)),base=kcalFor(BASE_ACT);
+  let h=`${msgBox()}<div class="card"><h3>Apple Sağlık (iPhone)</h3>
+    <p class="small mut" style="margin:4px 0 8px">iPhone'daki Sağlık uygulamasında kayıtlı <b>aktif enerji</b> (yürüyüş, kardiyo, antrenman) Bugün ekranındaki <b>🔄 Sağlık'tan çek</b> düğmesine basınca gelir ve o günün kalorisinden düşülür: 2800 kcal yedin, 300 kcal yaktıysan net 2500 kcal sayılır. Safari/ana ekran uygulaması Sağlık verisini doğrudan okuyamadığı için düğme, iPhone'a kurduğun bir kısayolu çalıştırır; kısayol veriyi okuyup buraya gönderir. Kısayolu bir kez kurman gerekir.</p>
+    <div class="small" style="margin-bottom:10px">Durum: ${HS.enabled?`<b style="color:var(--fat)">● Bağlı</b> · son eşitleme ${HS.last?fmtTs(HS.last):'henüz yok'}`:'<b>○ Kurulmadı</b>'}</div>
+    <div class="btnrow"><button class="btn sm" data-a="synckey">${HS.enabled?'Yeni anahtar üret':'Anahtar üret'}</button>${HS.enabled&&isIOS()?'<button class="btn alt sm" data-a="pullhealth">🔄 Şimdi Sağlık\'tan çek</button>':''}${HS.enabled?'<button class="btn alt sm" data-a="syncoff">Bağlantıyı kapat</button>':''}</div></div>`;
+  if(key)h+=`<div class="card" style="border-color:var(--pro)"><h3>Kişisel anahtarın</h3><div class="code num" id="rc" style="word-break:break-all">${esc(key)}</div>
+    <p class="small mut">Bir daha gösterilmeyecek; şimdi kısayola yapıştır. Kaybedersen yenisini üret (eskisi iptal olur). Bu anahtarı kimseyle paylaşma.</p>
+    <div class="btnrow"><button class="btn alt sm" data-a="copycode">Kopyala</button><button class="btn sm" data-a="synckeyok">Tamam</button></div></div>`;
+  h+=`<div class="card"><h3>Hedefim ve yakılan kalori</h3>
+    ${toggleRow('burnbase','Hedefi hareketsiz bazdan hesapla','Yakılan kalori ayrıca eklendiği için günlük aktiviteyi hedefe bir kez daha katmamak için önerilir.',!!S.prefs.burnBase)}
+    <p class="small mut" style="margin:10px 0 0">${cur===null?'Önce Profil sekmesine yaş, boy ve kilonu gir.':S.prefs.burnBase
+      ?`Hareketsiz bazla hedef ≈ <b class="num">${base}</b> kcal (şu an ${S.goals.kcal||cur}). Profil sekmesinde <b>Hedeflerimi hesapla</b>ya basınca uygulanır; elle değiştirdiğin hedefin ezilir. Yakılan kalori günlük bu hedefe eklenir.`
+      :`Şu anki aktivite düzeyin (×${S.profile.act}) hedefine zaten günlük hareket payı ekliyor. Yakılan kalori de eklenirse bir kısmı iki kez sayılır; açık seçersen hedef ≈ <b class="num">${base}</b> kcal olur.`}</p></div>
+  <div class="card"><h3>Kısayol kurulumu (bir kez, 5 dk)</h3>
+    <ol class="small" style="margin:8px 0 0;padding-left:20px;line-height:1.7">
+      <li>iPhone'da <b>Kısayollar</b> → <b>Kısayollarım</b> → <b>+</b> ile yeni kısayol oluştur ve adını tam olarak <span class="num">${esc(SC_NAME)}</span> yap.</li>
+      <li>Eylem ekle: <b>Sağlık Örneklerini Bul</b> (Find Health Samples). Filtre: Tür = <i>Aktif Enerji</i>, Başlangıç Tarihi = <i>bugün</i>.</li>
+      <li>Eylem ekle: <b>İstatistikleri Hesapla</b> → <i>Toplam</i> (girdi: Sağlık Örnekleri).</li>
+      <li>Eylem ekle: <b>Tarihi Biçimlendir</b>: Şimdiki Tarih, Özel biçim <span class="num">yyyy-MM-dd</span>.</li>
+      <li>Eylem ekle: <b>URL İçeriklerini Al</b>. URL: <span class="num" id="surl" style="word-break:break-all">${esc(url)}</span> <button class="chip" data-a="copyurl" style="margin:0">Kopyala</button><br>Yöntem: <b>POST</b>. Başlıklar: <span class="num">Authorization</span> = <span class="num" style="word-break:break-all">Bearer ${esc(kk)}</span><br>İstek Gövdesi: <b>JSON</b>, iki alan: <span class="num">kcal</span> (Sayı) = <i>İstatistikler</i> sonucu, <span class="num">date</span> (Metin) = <i>Biçimlendirilmiş Tarih</i>.</li>
+      <li>Kısayolu kaydet. İlk çalıştırmada iPhone Sağlık verisine ve internete erişim izni isteyecek; izin ver.</li>
+      <li>Artık Bugün ekranındaki <b>🔄 Sağlık'tan çek</b> düğmesine basman yeter. Kısayollar uygulaması kısa süre açılır, veriyi gönderir; uygulamaya dönünce yakılan kalori güncellenmiş olur.</li></ol>
+    <p class="small mut" style="margin:10px 0 0"><b>Not:</b> Düğme yalnızca iPhone/iPad'de görünür. Safari'de açtıysan iş bitince kendiliğinden geri döner; ana ekrana eklenmiş uygulamada Kısayollar'dan elle geri dönmen gerekebilir. Kısayolu istersen her gece otomatik de çalıştırabilirsin (Kısayollar → Otomasyon → Günün Saati), ama iPhone kilitliyken Sağlık verisi okunamaz; o durumda sunucu gelen 0'ı yok sayar. Kısayol çalışmazsa Bugün ekranından yakılan kaloriyi elle girebilirsin; elle girilen değer otomatik gelen veriyle ezilmez.</p></div>`;
+  return h;
+}
 function viewSettings(){
-  const tabs=[['account','Hesap'],['profile','Profil'],['prefs','Tercihler'],['data','Veri']];
+  const tabs=[['account','Hesap'],['profile','Profil'],['health','Sağlık'],['prefs','Tercihler'],['data','Veri']];
   if(AUTH.cur&&AUTH.cur.isAdmin)tabs.push(['admin','Yönetim']);
-  const body=V.st==='account'?setAccount():V.st==='prefs'?setPrefs():V.st==='data'?setData():V.st==='admin'?viewAdmin():setProfile();
+  const body=V.st==='account'?setAccount():V.st==='prefs'?setPrefs():V.st==='data'?setData():V.st==='health'?setHealth():V.st==='admin'?viewAdmin():setProfile();
   return `<h2 style="margin-top:6px">Ayarlar</h2><div class="seg" style="margin-bottom:12px">${tabs.map(([k,l])=>`<button data-a="sub" data-s="${k}" class="${V.st===k?'on':''}">${l}</button>`).join('')}</div>${body}`;
 }
 
 /* ---------- Yönetim paneli (yalnızca yöneticiler) ---------- */
 const ADM_ACT={view_data:'verilerini görüntüledi',reset_password:'şifreni sıfırladı',wipe_data:'verilerini sildi',update_user:'hesap ayarlarını değiştirdi',delete_user:'bir hesabı sildi',
-  create_invite:'davet kodu üretti',revoke_invite:'davet kodunu iptal etti',restore_invite:'davet kodunu geri açtı',delete_invite:'davet kodunu sildi',update_settings:'sistem ayarlarını değiştirdi'};
+  create_invite:'davet kodu üretti',revoke_invite:'davet kodunu iptal etti',restore_invite:'davet kodunu geri açtı',delete_invite:'davet kodunu sildi',update_settings:'sistem ayarlarını değiştirdi',download_backup:'veritabanı yedeğini indirdi'};
 const fmtTs=ts=>{if(!ts)return '—';const d=new Date(ts);return d.toLocaleDateString('tr-TR',{day:'numeric',month:'short'})+' '+pad(d.getHours())+':'+pad(d.getMinutes())};
 const fmtBytes=n=>n>=1048576?(n/1048576).toFixed(1).replace('.',',')+' MB':n>=1024?r0(n/1024)+' KB':n+' B';
 let AV=null;   // yönetici panelinde görüntülenen kullanıcının verisi (salt okunur kopya)
@@ -1111,7 +1197,11 @@ function admSystem(){
     <p class="small mut" style="margin:10px 0 0">Kaydı herkese açmak için şifreni gir (diğer değişikliklerde boş bırakabilirsin).</p>${admPwField('apw5').replace(' required','')}
     <button class="btn full" style="margin-top:12px">Kaydet</button></form></div>
   <div class="card"><h3>Durum</h3><div class="small" style="line-height:1.9">Gemini anahtarı: ${ok(sy.geminiKey)}<br>OpenRouter anahtarı: ${ok(sy.openrouterKey)}<br>USDA anahtarı: ${ok(sy.usdaKey)}<br>Model zinciri: <span class="num">${esc(sy.chain.join(' → '))}</span><br>Geçerli kayıt modu: <b>${esc(sy.registrationEffective)}</b><br>Önbellek: ${D.stats.aiCache} YZ cevabı · ${D.stats.foodCache} besin araması<br>Veritabanı: ${fmtBytes(D.stats.dbBytes)}<br>Saat dilimi: ${esc(sy.tz)}</div>
-    <p class="note">Model zinciri, API anahtarları ve USDA anahtarı Coolify ortam değişkenlerinden değişir; sunucu yeniden başlatılır.</p></div>`;
+    <p class="note">Model zinciri, API anahtarları ve USDA anahtarı Coolify ortam değişkenlerinden değişir; sunucu yeniden başlatılır.</p></div>
+  <div class="card"><h3>Veritabanı yedeği</h3>
+    <p class="small mut" style="margin:4px 0 0">Tüm kullanıcıların verilerini içeren tek bir <span class="num">.db</span> dosyası indirir. Şifre özetleri de içindedir; güvenli bir yerde sakla, kimseyle paylaşma. İndirmek şifreni ister ve işlem kayıtlarına yazılır.</p>
+    <div class="small mut" style="margin-top:8px">Sunucudaki otomatik yedekler: ${D.stats.backups.count?`${D.stats.backups.count} dosya (${fmtBytes(D.stats.backups.bytes)}), en yenisi ${fmtTs(D.stats.backups.last)}`:'henüz yok'}</div>
+    <form data-f="adm_backup" autocomplete="off">${admPwField('apw6')}<button class="btn alt full" style="margin-top:12px">Yedeği indir (.db)</button></form></div>`;
 }
 function admLog(){
   const L=V.adm.log;
@@ -1322,11 +1412,11 @@ const A={
     const g=S.goals,days=[];
     for(let i=13;i>=0;i--){
       const d=addDays(TODAY,-i),t=totals(d),dd=getDayRO(d);
-      if((dd.meals||[]).length||dd.weight||waterSum(d)){const o={tarih:d,kilo:dd.weight||null,su_ml:waterSum(d),takviyeler:Object.values(dd.sup||{}).map(s=>s.name+' x'+s.c)};NK.forEach(k=>{if(t[k])o[k]=r1(t[k])});const st=suppTotals(d);o.takviyeden=Object.fromEntries(NK.map(k=>[k,r1(st[k])]).filter(([,v])=>v>0));days.push(o)}
+      if((dd.meals||[]).length||dd.weight||waterSum(d)){const o={tarih:d,kilo:dd.weight||null,su_ml:waterSum(d),takviyeler:Object.values(dd.sup||{}).map(s=>s.name+' x'+s.c)};if(burnOf(d))o.yakilan_aktif_kcal=r0(burnOf(d));NK.forEach(k=>{if(t[k])o[k]=r1(t[k])});const st=suppTotals(d);o.takviyeden=Object.fromEntries(NK.map(k=>[k,r1(st[k])]).filter(([,v])=>v>0));days.push(o)}
     }
     const snap=statsSnapshot();
     try{
-      V.coach=await ask(`Sen samimi ama dürüst, bilimsel bilgisi güçlü bir beslenme koçusun. Aşağıdaki son 14 günlük verileri analiz et ve Türkçe yaz.\n\nProfil: ${JSON.stringify(S.profile)}\nGünlük hedefler: ${JSON.stringify(g)}\nBesin referans değerleri: ${JSON.stringify(nTargets())}\nGünlük kayıtlar (besin değerleri yiyecek + takviye toplamıdır; anahtarlar ve birimler: ${KEYDOC}; yazılmayan anahtar 0 demektir; "takviyeden" alanı sadece takviyelerin katkısı): ${JSON.stringify(days)}\nKilo trendi (kg/hafta, son 28 gün): ${snap.tr?r1(snap.tr.perWeek):'yok'}. Tahmini gerçek günlük harcama: ${snap.real?r0(snap.real):'hesaplanamadı'}. Su hedefi: ${waterGoal()} ml.\n\nŞu başlıklarla yaz: BESLENME (kalori, protein ve makro uyumu; yağ kalitesi, lif, şeker, sodyum), VİTAMİN VE MİNERALLER (takviyeler dahil hangileri eksik kalıyor, hangileri fazla veya üst sınıra yakın; takviye gerçekten gerekli mi yoksa yiyeceklerle mi kapanır), SU VE KİLO (su alışkanlığı, kilo trendi ve kalori açığı hedefle uyumlu mu, sürdürülebilir mi), ÖNÜMÜZDEKİ HAFTA İÇİN 4 NET ADIM. Veri azsa ya da eksikse bunu açıkça söyle, uydurma; sayılara dayan. Besin değerlerinin yapay zekâ tahmini olduğunu ve eksik kayıt mikro besinleri düşük gösterebileceğini hesaba kat. Markdown işaretleri kullanma, başlıkları BÜYÜK HARFLE yaz, düz metin olsun, en fazla 320 kelime. Tıbbi teşhis koyma; takviye dozu üst sınıra yakınsa ya da olağandışı bir durum görürsen doktor/eczacıya danışmasını söyle.`,{modelTier:'complex',cache:false},false);
+      V.coach=await ask(`Sen samimi ama dürüst, bilimsel bilgisi güçlü bir beslenme koçusun. Aşağıdaki son 14 günlük verileri analiz et ve Türkçe yaz.\n\nProfil: ${JSON.stringify(S.profile)}\nGünlük hedefler: ${JSON.stringify(g)} (yakilan_aktif_kcal varsa o gün Apple Sağlık/elle girilen aktif enerjidir; kalori hedefi yenenden bu miktar düşülerek, yani net kaloriyle karşılaştırılır)\nBesin referans değerleri: ${JSON.stringify(nTargets())}\nGünlük kayıtlar (besin değerleri yiyecek + takviye toplamıdır; anahtarlar ve birimler: ${KEYDOC}; yazılmayan anahtar 0 demektir; "takviyeden" alanı sadece takviyelerin katkısı): ${JSON.stringify(days)}\nKilo trendi (kg/hafta, son 28 gün): ${snap.tr?r1(snap.tr.perWeek):'yok'}. Tahmini gerçek günlük harcama: ${snap.real?r0(snap.real):'hesaplanamadı'}. Su hedefi: ${waterGoal()} ml.\n\nŞu başlıklarla yaz: BESLENME (kalori, protein ve makro uyumu; yağ kalitesi, lif, şeker, sodyum), VİTAMİN VE MİNERALLER (takviyeler dahil hangileri eksik kalıyor, hangileri fazla veya üst sınıra yakın; takviye gerçekten gerekli mi yoksa yiyeceklerle mi kapanır), SU VE KİLO (su alışkanlığı, kilo trendi ve kalori açığı hedefle uyumlu mu, sürdürülebilir mi), ÖNÜMÜZDEKİ HAFTA İÇİN 4 NET ADIM. Veri azsa ya da eksikse bunu açıkça söyle, uydurma; sayılara dayan. Besin değerlerinin yapay zekâ tahmini olduğunu ve eksik kayıt mikro besinleri düşük gösterebileceğini hesaba kat. Markdown işaretleri kullanma, başlıkları BÜYÜK HARFLE yaz, düz metin olsun, en fazla 320 kelime. Tıbbi teşhis koyma; takviye dozu üst sınıra yakınsa ya da olağandışı bir durum görürsen doktor/eczacıya danışmasını söyle.`,{modelTier:'complex',cache:false},false);
     }catch(e){V.coach=(V.coach?V.coach+'\n\n':'')+errMsg(e)}
     V.coachBusy=false;render();
   },
@@ -1342,7 +1432,8 @@ const A={
 };
 Object.assign(A,{
   async sub(ds){
-    V.st=ds.s;V.smsg=null;V.newCode=null;window.scrollTo(0,0);render();
+    V.st=ds.s;V.smsg=null;V.newCode=null;V.syncKey=null;window.scrollTo(0,0);render();
+    if(ds.s==='health'){await loadBurn();render()}
     if(ds.s==='admin'&&!V.adm.data)await admLoad();
     if(ds.s==='data'){try{V.accessLog=(await api('/account/access-log')).log}catch(e){V.accessLog=null}render()}
   },
@@ -1361,6 +1452,32 @@ Object.assign(A,{
   codeok(){V.newCode=null;render()},
   async logout(){await leaveApp();render()},
   async retryboot(){await boot()},
+  pullhealth(){
+    if(!HS.enabled){toast('Önce Ayarlar → Sağlık bölümünden bağlantıyı kur.');return}
+    pullAt=Date.now();
+    let u='shortcuts://run-shortcut?name='+encodeURIComponent(SC_NAME);
+    // Tarayıcıdan açıldıysa iş bitince geri dön; ana ekrandaki uygulamada https adresi Safari'yi açacağı için eklenmez
+    if(!(window.matchMedia&&matchMedia('(display-mode: standalone)').matches)&&!navigator.standalone){const back=encodeURIComponent(location.origin+'/');u+='&x-success='+back+'&x-cancel='+back+'&x-error='+back}
+    location.href=u;
+  },
+  burnedit(){V.burnEdit=!V.burnEdit;render()},
+  async burndel(){
+    try{const r=await api('/burn',{method:'POST',body:{date:V.date,kcal:null}});HB=r.days||{};V.burnEdit=false}catch(e){toast(errMsg(e))}
+    render();
+  },
+  burnbase(){S.prefs.burnBase=!S.prefs.burnBase;persist('core');render()},
+  async synckey(){
+    if(HS.enabled&&!confirm('Yeni anahtar üretilince eski anahtar çalışmaz; kısayolundaki anahtarı güncellemen gerekir. Devam edilsin mi?'))return;
+    try{const r=await api('/sync-key',{method:'POST',body:{}});V.syncKey=r.key;HS.enabled=true;V.smsg=null}catch(e){V.smsg={ok:false,t:errMsg(e)}}
+    render();
+  },
+  synckeyok(){V.syncKey=null;render()},
+  async syncoff(){
+    if(!confirm('Apple Sağlık bağlantısı kapatılsın mı? Kısayolun veri gönderemez. Mevcut kayıtların silinmez.'))return;
+    try{await api('/sync-key/revoke',{method:'POST',body:{}});HS.enabled=false;V.syncKey=null;V.smsg=null}catch(e){V.smsg={ok:false,t:errMsg(e)}}
+    render();
+  },
+  async copyurl(){try{await navigator.clipboard.writeText(location.origin+'/api/health-sync');toast('Adres kopyalandı.')}catch(e){toast('Kopyalanamadı; adresi elle yaz.')}},
   theme(ds){S.prefs.theme=ds.v;applyTheme();persist('core');render()},
   ulw(){S.prefs.ulWarn=S.prefs.ulWarn===false;persist('core');render()}
 });

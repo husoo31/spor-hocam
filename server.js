@@ -57,8 +57,46 @@ function regMode() {
 }
 
 /* ------------------------------------------------------------------ veritabanı */
+const DB_FILE = path.join(DATA_DIR, 'spor.db');
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+
+// Docker'da /data kalıcı bir volume değilse, her güncellemede (yeni konteyner) veritabanı sıfırlanır.
+// Bunu sessizce kabul etme: boş veritabanıyla başlamayı reddet, yoksa ilk kayıt olan kişi yönetici olur.
+function isMountPoint(dir) {
+  try {
+    const target = path.resolve(dir);
+    return fs.readFileSync('/proc/self/mountinfo', 'utf8').split('\n')
+      .some(l => (l.split(' ')[4] || '').replace(/\\040/g, ' ') === target);
+  } catch (e) { return null; } // Linux değil ya da okunamadı: bilinmiyor
+}
+if (process.platform === 'linux' && fs.existsSync('/.dockerenv') && env.ALLOW_EPHEMERAL_DATA !== 'true' && isMountPoint(DATA_DIR) === false) {
+  if (!fs.existsSync(DB_FILE)) {
+    console.error(`DURDURULDU: ${DATA_DIR} kalıcı bir volume değil ve veritabanı yok. Bu hâlde her güncellemede tüm veriler silinir.\n` +
+      `Coolify → Persistent Storage → Volume ekle (Destination Path: ${DATA_DIR}), sonra yeniden deploy et. (Bilerek geçici kullanacaksan ALLOW_EPHEMERAL_DATA=true)`);
+    process.exit(1);
+  }
+  console.warn(`UYARI: ${DATA_DIR} kalıcı bir volume değil; bir sonraki güncellemede veriler SİLİNECEK. Hemen volume ekle.`);
+}
+
 fs.mkdirSync(DATA_DIR, { recursive: true });
-const db = new DatabaseSync(path.join(DATA_DIR, 'spor.db'));
+const db = new DatabaseSync(DB_FILE);
+
+// Tutarlı anlık yedek (VACUUM INTO). kind: 'start' (açılışta, şema değişikliğinden önce) ya da 'daily'. En yeni `keep` tanesi tutulur.
+function backupDb(kind, keep) {
+  try {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").get()) return;
+    if (!db.prepare('SELECT 1 FROM users LIMIT 1').get()) return; // boş veritabanını yedekleme
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/\..*/, '').replace(/[-:]/g, '').replace('T', '-');
+    const file = path.join(BACKUP_DIR, `${kind}-${stamp}.db`);
+    if (fs.existsSync(file)) return;
+    db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+    fs.readdirSync(BACKUP_DIR).filter(f => f.startsWith(kind + '-') && f.endsWith('.db')).sort().reverse().slice(keep)
+      .forEach(f => fs.unlinkSync(path.join(BACKUP_DIR, f)));
+    console.log(`[yedek] ${path.basename(file)} alındı`);
+  } catch (e) { console.error('[yedek] alınamadı:', e.message); }
+}
+backupDb('start', Number(env.BACKUP_KEEP_START) || 5);
 db.exec(`
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
@@ -90,6 +128,8 @@ addCol('users', 'must_change', 'INTEGER NOT NULL DEFAULT 0');
 addCol('users', 'ai_limit', 'INTEGER');
 addCol('users', 'last_login', 'INTEGER');
 addCol('users', 'consent', 'TEXT');
+addCol('users', 'sync_hash', 'TEXT'); // iPhone Kısayolları (Apple Sağlık) anahtarının özeti; anahtarın kendisi saklanmaz
+db.exec('CREATE INDEX IF NOT EXISTS users_sync ON users(sync_hash)');
 // Yönetici yoksa (eski sürümden geçiş) en eski hesap yönetici olur
 db.exec(`UPDATE users SET is_admin=1 WHERE id=(SELECT id FROM users ORDER BY created, rowid LIMIT 1)
   AND NOT EXISTS(SELECT 1 FROM users WHERE is_admin=1)`);
@@ -109,6 +149,9 @@ const q = {
   delOtherSess: db.prepare('DELETE FROM sessions WHERE user_id=? AND token_hash<>?'),
   purgeSess: db.prepare('DELETE FROM sessions WHERE expires<?'),
   docs: db.prepare('SELECT id,data FROM docs WHERE user_id=?'),
+  docGet: db.prepare('SELECT data FROM docs WHERE user_id=? AND id=?'),
+  userBySync: db.prepare('SELECT * FROM users WHERE sync_hash=?'),
+  setSync: db.prepare('UPDATE users SET sync_hash=? WHERE id=?'),
   docCount: db.prepare('SELECT COUNT(*) AS n FROM docs WHERE user_id=?'),
   putDoc: db.prepare('INSERT INTO docs(user_id,id,data,updated) VALUES(?,?,?,?) ON CONFLICT(user_id,id) DO UPDATE SET data=excluded.data,updated=excluded.updated'),
   delDoc: db.prepare('DELETE FROM docs WHERE user_id=? AND id=?'),
@@ -497,6 +540,12 @@ async function adminPw(admin, pw, ip) {
   if (!ok) { rlFail(k1, k2); throw new HttpError(403, 'bad_password', 'Yönetici şifresi hatalı.'); }
   rlOk(k1);
 }
+function backupInfo() {
+  try {
+    const stats = fs.readdirSync(BACKUP_DIR).filter(f => /^(start|daily)-.*\.db$/.test(f)).map(f => fs.statSync(path.join(BACKUP_DIR, f)));
+    return { count: stats.length, last: stats.reduce((a, s) => Math.max(a, s.mtimeMs), 0) || null, bytes: stats.reduce((a, s) => a + s.size, 0) };
+  } catch (e) { return { count: 0, last: null, bytes: 0 }; }
+}
 const intIn = (v, min, max, name) => {
   const n = Number(v);
   if (!Number.isInteger(n) || n < min || n > max) throw new HttpError(400, 'bad_request', `${name} ${min}-${max} arasında bir tam sayı olmalı.`);
@@ -519,12 +568,35 @@ async function handleAdmin(req, res, p, m, cu, ip) {
         status: !r.active ? 'iptal' : r.expires && r.expires < now ? 'süresi doldu' : r.max_uses && r.uses >= r.max_uses ? 'doldu' : 'geçerli' })),
       masterInvite: !!env.INVITE_CODE,
       settings: { registration: getSetting('registration'), aiUserLimit: Number(getSetting('ai_user_limit')), aiGlobalLimit: Number(getSetting('ai_global_limit')), maxUsers: Number(getSetting('max_users')), showAccessLog: getSetting('show_access_log') === 'true' },
-      stats: { users: users.length, aiToday: q.usageSum.get(day).n, aiCache: q.cacheCount.get().n, foodCache: q.foodCacheCount.get().n, dbBytes: dbBytes() },
+      stats: { users: users.length, aiToday: q.usageSum.get(day).n, aiCache: q.cacheCount.get().n, foodCache: q.foodCacheCount.get().n, dbBytes: dbBytes(), backups: backupInfo() },
       system: {
         chain: CHAINS.default.map(c => c.provider + ':' + c.model), geminiKey: !!env.GEMINI_API_KEY, openrouterKey: !!env.OPENROUTER_API_KEY, usdaKey: ref.usdaEnabled(),
         registrationEffective: regMode(), tz: TZ,
       },
     });
+  }
+
+  // Tüm veritabanının (tüm kullanıcılar, şifre özetleri dahil) anlık kopyası: yalnızca yönetici, şifre yeniden istenir, kayda geçer.
+  if (p === '/api/admin/backup' && m === 'POST') {
+    const b = await readBody(req, 2000);
+    await adminPw(admin, b.adminPassword, ip);
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    for (const f of fs.readdirSync(BACKUP_DIR)) { // çökmeden kalmış geçici dosyaları temizle
+      try { if (f.startsWith('tmp-') && Date.now() - fs.statSync(path.join(BACKUP_DIR, f)).mtimeMs > 3600000) fs.unlinkSync(path.join(BACKUP_DIR, f)); } catch (e) { /* başkası sildi */ }
+    }
+    const file = path.join(BACKUP_DIR, `tmp-${rnd(6).toString('hex')}.db`);
+    try { db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`); }
+    catch (e) { console.error('[yedek] indirme için alınamadı:', e.message); throw new HttpError(500, 'backup_failed', 'Yedek oluşturulamadı.'); }
+    const size = fs.statSync(file).size;
+    logAdmin(admin.id, null, 'download_backup', { bytes: size });
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': size, 'Cache-Control': 'no-store',
+      'Content-Disposition': `attachment; filename="spor-hocam-yedek-${today()}.db"` });
+    const st = fs.createReadStream(file);
+    st.on('close', () => fs.rm(file, { force: true }, () => {}));
+    res.on('close', () => st.destroy());
+    st.on('error', () => res.destroy());
+    st.pipe(res);
+    return;
   }
 
   if (p === '/api/admin/log' && m === 'GET') {
@@ -643,11 +715,69 @@ async function verifyUserPassword(user, pw, ip) {
   rlOk(k1);
 }
 
+/* ------------------------------------------------------------------ yakılan kalori (Apple Sağlık / elle) */
+// Ayrı bir kayıtta ('health') tutulur; arayüz ay kayıtlarını ('m-*') bütün olarak yazdığı için sunucu onlara dokunmaz.
+// Biçim: { days: { 'YYYY-MM-DD': { kcal, steps?, src: 'sync' | 'manual', ts } }, last }
+const HEALTH_DOC = 'health';
+function readHealth(userId) {
+  try { const r = q.docGet.get(userId, HEALTH_DOC); const d = r ? JSON.parse(r.data) : {}; return { days: d.days || {}, last: d.last || null }; }
+  catch (e) { return { days: {}, last: null }; }
+}
+function writeHealth(userId, h) {
+  const days = {};
+  Object.keys(h.days).sort().slice(-400).forEach(k => { days[k] = h.days[k]; });
+  q.putDoc.run(userId, HEALTH_DOC, JSON.stringify({ days, last: h.last }), Date.now());
+}
+// Kısayollar sayıyı "312,5 kcal" ya da "1.234,5" gibi metin olarak da gönderebilir
+function parseNum(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : NaN;
+  let s = String(v ?? '').replace(/[^\d.,-]/g, '');
+  if (!s) return NaN;
+  const lc = s.lastIndexOf(','), ld = s.lastIndexOf('.');
+  if (lc >= 0 && ld >= 0) s = lc > ld ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+  else if (lc >= 0) s = /^\d{1,3}(,\d{3})+$/.test(s) ? s.replace(/,/g, '') : s.replace(',', '.');
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
+  return Number(s);
+}
+function dayStr(offsetDays) { return new Date(Date.now() + offsetDays * 864e5).toLocaleDateString('sv-SE', { timeZone: TZ }); }
+function burnDate(raw, maxBackDays) {
+  const d = raw === undefined || raw === null || raw === '' ? today() : String(raw).trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d < dayStr(-maxBackDays) || d > dayStr(1)) throw new HttpError(400, 'bad_date', `Tarih YYYY-AA-GG biçiminde ve son ${maxBackDays} gün içinde olmalı.`);
+  return d;
+}
+function genSyncKey() { return 'sh_' + rnd(24).toString('base64url'); }
+
 async function handleApi(req, res, url) {
   const m = req.method, p = url.pathname;
   const ip = clientIp(req);
 
   if (p === '/api/health') return send(res, 200, { ok: true });
+
+  // iPhone Kısayolları buradan veri gönderir. Çerez değil, kişisel anahtar kullanır (tarayıcıdan tetiklenemez), bu yüzden CSRF başlığı aranmaz.
+  if (p === '/api/health-sync' && m === 'POST') {
+    const b = await readBody(req, 5000);
+    const auth = String(req.headers.authorization || '');
+    const key = (/^bearer\s+/i.test(auth) ? auth.replace(/^bearer\s+/i, '') : String(b.key || '')).trim();
+    rlCheck(`sync:${ip}`);
+    const u = key.length >= 20 && key.length <= 100 ? q.userBySync.get(sha256(key)) : null;
+    if (!u) { rlFail(`sync:${ip}`); throw new HttpError(401, 'bad_key', 'Anahtar geçersiz. Uygulamada Ayarlar → Sağlık bölümünden yeni anahtar üret.'); }
+    if (u.disabled) throw new HttpError(403, 'disabled', 'Hesap askıya alınmış.');
+    const kcal = parseNum(b.kcal ?? b.activeKcal);
+    if (!Number.isFinite(kcal) || kcal < 0 || kcal > 15000) throw new HttpError(400, 'bad_kcal', 'kcal 0-15000 arasında bir sayı olmalı.');
+    const date = burnDate(b.date, 7);
+    const stepsN = b.steps === undefined ? NaN : parseNum(b.steps);
+    const h = readHealth(u.id), cur = h.days[date];
+    let result = 'saved';
+    if (cur && cur.src === 'manual') result = 'skipped_manual';        // elle girilen değer korunur
+    else if (kcal === 0) result = 'skipped_zero'; // kilitli telefonda Sağlık verisi okunamaz ve 0 gelebilir: dolu değeri ezme
+    else {
+      h.days[date] = { kcal: Math.round(kcal), ...(Number.isFinite(stepsN) && stepsN >= 0 && stepsN <= 200000 ? { steps: Math.round(stepsN) } : {}), src: 'sync', ts: Date.now() };
+      h.last = Date.now();
+      writeHealth(u.id, h);
+    }
+    rlOk(`sync:${ip}`);
+    return send(res, 200, { ok: true, result, date, kcal: (h.days[date] || {}).kcal || 0 });
+  }
 
   if (m !== 'GET') {
     if (req.headers['x-requested-with'] !== 'spor-hocam') throw new HttpError(403, 'csrf', 'İstek reddedildi.');
@@ -802,6 +932,32 @@ async function handleApi(req, res, url) {
     return send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
   }
 
+  if (p === '/api/burn' && m === 'GET') {
+    const h = readHealth(user.id);
+    return send(res, 200, { days: h.days, sync: { enabled: !!user.sync_hash, last: h.last } });
+  }
+  if (p === '/api/burn' && m === 'POST') { // elle giriş; kcal boşsa o günün kaydı silinir
+    const b = await readBody(req, 2000);
+    const date = burnDate(b.date, 400), h = readHealth(user.id);
+    if (b.kcal === null || b.kcal === '' || b.kcal === undefined) delete h.days[date];
+    else {
+      const kcal = parseNum(b.kcal);
+      if (!Number.isFinite(kcal) || kcal < 0 || kcal > 15000) throw new HttpError(400, 'bad_kcal', 'Yakılan kalori 0-15000 arasında bir sayı olmalı.');
+      h.days[date] = { kcal: Math.round(kcal), src: 'manual', ts: Date.now() };
+    }
+    writeHealth(user.id, h);
+    return send(res, 200, { days: h.days });
+  }
+  if (p === '/api/sync-key' && m === 'POST') { // anahtar yalnızca burada, bir kez gösterilir; yenilenince eskisi geçersiz olur
+    const key = genSyncKey();
+    q.setSync.run(sha256(key), user.id);
+    return send(res, 200, { key });
+  }
+  if (p === '/api/sync-key/revoke' && m === 'POST') {
+    q.setSync.run(null, user.id);
+    return send(res, 200, { ok: true });
+  }
+
   if (p === '/api/docs' && m === 'GET') {
     const rows = q.docs.all(user.id).map(r => ({ id: r.id, data: JSON.parse(r.data) }));
     return send(res, 200, { docs: rows });
@@ -890,6 +1046,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.requestTimeout = 150000;
+setInterval(() => backupDb('daily', Number(env.BACKUP_KEEP_DAILY) || 14), 24 * 3600000).unref();
 server.listen(PORT, () => {
   console.log(`Spor Hocam http://0.0.0.0:${PORT} üzerinde çalışıyor. Veri: ${DATA_DIR}`);
   console.log(`Kayıt modu: ${regMode()} | yapay zekâ: ${aiEnabled() ? 'açık' : 'KAPALI (anahtar yok)'} | zincir: ${CHAINS.default.map(c => c.provider + ':' + c.model).join(' → ')}`);

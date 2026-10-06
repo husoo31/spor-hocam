@@ -72,6 +72,26 @@ try {
   await call('POST', '/api/admin/settings', { showAccessLog: false }, A);
   ok((await call('GET', `/api/admin/users/${boraId}/data`, undefined, B)).s === 403, 'Bora başkasının verisine bakamıyor');
 
+  /* ---- veritabanı yedeği indirme ---- */
+  const dl = (j, body) => fetch(base + '/api/admin/backup', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'spor-hocam', Cookie: j.c }, body: JSON.stringify(body) });
+  ok((await dl(B, { adminPassword: PWB })).status === 403, 'yönetici olmayan yedek indiremiyor (403)');
+  ok((await dl(jar(), { adminPassword: PWA })).status === 401, 'oturumsuz yedek indirilemiyor (401)');
+  ok((await dl(A, {})).status === 403, 'şifresiz yedek indirilemiyor');
+  ok((await dl(A, { adminPassword: 'yanlis-sifre' })).status === 403, 'yanlış şifreyle yedek indirilemiyor');
+  const bk = await dl(A, { adminPassword: PWA });
+  const bkBuf = Buffer.from(await bk.arrayBuffer());
+  ok(bk.status === 200 && /attachment; filename="spor-hocam-yedek-\d{4}-\d{2}-\d{2}\.db"/.test(bk.headers.get('content-disposition') || ''), 'doğru şifreyle yedek dosya olarak iniyor');
+  ok(bkBuf.length > 4096 && bkBuf.subarray(0, 15).toString() === 'SQLite format 3', 'indirilen dosya geçerli bir SQLite veritabanı');
+  const bkFile = path.join(dir, 'indirilen-yedek.db'); fs.writeFileSync(bkFile, bkBuf);
+  const { DatabaseSync } = await import('node:sqlite');
+  const bdb = new DatabaseSync(bkFile, { readOnly: true });
+  ok(bdb.prepare('SELECT COUNT(*) AS n FROM users').get().n === 2 && bdb.prepare('SELECT COUNT(*) AS n FROM docs').get().n === 2, 'yedek tüm kullanıcıları ve Bora\'nın kayıtlarını içeriyor');
+  bdb.close();
+  await new Promise(r => setTimeout(r, 300));
+  ok(!fs.existsSync(path.join(dir, 'backups')) || fs.readdirSync(path.join(dir, 'backups')).every(f => !f.startsWith('tmp-')), 'geçici yedek dosyası sunucuda kalmadı');
+  ok((await call('GET', '/api/admin/log', undefined, A)).j.log.some(x => x.action === 'download_backup' && x.admin === 'Admin'), 'yedek indirme yönetici işlem kaydına yazıldı');
+  ok((await call('GET', '/api/account/access-log', undefined, B)).j.log.length === 0, 'yedek indirme Bora\'nın ekranında ayrı bir kayıt olarak görünmüyor');
+
   /* ---- davet kodları ---- */
   r = await call('POST', '/api/admin/invites', { label: 'Cem için', maxUses: 1, expiresDays: 7 }, A);
   const inv = r.j;
