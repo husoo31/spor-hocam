@@ -227,7 +227,7 @@ const mon=d=>{const k=d.slice(0,7);const m=S.months[k]??(S.months[k]={});m.days=
 const getDay=d=>{const m=mon(d);const x=m.days[d]??(m.days[d]={});if(!Array.isArray(x.meals))x.meals=[];return x};
 const getDayRO=d=>(S.months[d.slice(0,7)]?.days||{})[d]||{meals:[]};
 const save=d=>persist(d.slice(0,7));
-const hasData=d=>{const x=getDayRO(d);return (x.meals||[]).length>0||(x.water||[]).length>0||!!x.weight||Object.keys(x.sup||{}).length>0};
+const hasData=d=>{const x=getDayRO(d);return (x.meals||[]).length>0||(x.water||[]).length>0||!!x.weight||Object.keys(x.sup||{}).length>0||num(x.gas)>0};
 
 /* günlük toplamlar: yiyecek + takviye */
 function suppTotals(d){
@@ -773,6 +773,15 @@ function waterCard(d){
   <div class="btnrow" style="margin-top:12px">${[200,330,500,750].map(v=>`<button class="btn alt sm" data-a="wadd" data-v="${v}">+${v}</button>`).join('')}<button class="btn alt sm" data-a="wundo" ${ml?'':'disabled'} aria-label="Son eklemeyi geri al">↶ Geri al</button></div>
   <div class="row" style="margin-top:8px"><input id="wc" inputmode="numeric" placeholder="Farklı miktar (ml)" aria-label="Özel su miktarı"><button class="btn sm" style="min-width:70px" data-a="wcustom">Ekle</button></div></div>`;
 }
+/* gaz sayacı: günün kaydında (day.gas) tek bir sayı; mevcut alanlara dokunmaz */
+function gasCard(d){
+  const n=num(getDayRO(d).gas);
+  return `<div class="card"><h3>${d===TODAY?'Bugün':esc(dlabel(d))} kaç kere osurdum</h3>
+  <div class="num" style="font-size:56px;font-weight:700;line-height:1.1;text-align:center;margin:10px 0 4px" role="status" aria-live="polite" aria-label="${n} kere">${n}</div>
+  <div class="row" style="gap:10px;margin-top:10px">
+    <button class="btn alt" style="flex:1;min-height:52px;font-size:28px" data-a="gas" data-n="-1" ${n?'':'disabled'} aria-label="Bir azalt">−</button>
+    <button class="btn" style="flex:1;min-height:52px;font-size:28px" data-a="gas" data-n="1" aria-label="Bir artır">+</button></div></div>`;
+}
 function suppCard(d){
   const day=getDayRO(d),sup=day.sup||{};
   const gone=Object.entries(sup).filter(([id])=>!S.supps.find(s=>s.id===id));
@@ -824,6 +833,7 @@ function viewToday(){
     </div>`;
   }
   h+=waterCard(d);
+  h+=gasCard(d);
   h+=`<div class="card"><h3>Ne yedin?</h3>
     <p class="mut small" style="margin:4px 0 8px">Doğal yaz: “2 yumurta, 1 dilim tam buğday ekmeği, bir bardak süt”. Gramaj ya da etiket değeri yazarsan aynen kullanırım.</p>
     <textarea data-i="food" placeholder="Yediklerini buraya yaz…">${esc(V.food)}</textarea>
@@ -962,7 +972,7 @@ function viewHistory(){
   else{
     h+=`<div class="card" style="padding:4px 14px">${shown.map(d=>{
       const t=totals(d),x=getDayRO(d),w=waterSum(d),sup=Object.keys(x.sup||{}).length;
-      return `<div class="hrow" data-a="open" data-d="${d}" role="button" tabindex="0"><div style="min-width:74px"><b>${dmid(d)}</b></div><div class="grow"><div class="num"><b>${r0(t.kcal)}</b> kcal · P ${r0(t.protein)}g · K ${r0(t.carbs)}g · Y ${r0(t.fat)}g</div><div class="mut small">${w?`💧 ${(w/1000).toFixed(1).replace('.',',')} L`:''}${sup?` · 💊 ${sup} takviye`:''}${x.weight?` · ⚖ ${f1(x.weight)} kg`:''}</div></div><span class="mut">›</span></div>`;
+      return `<div class="hrow" data-a="open" data-d="${d}" role="button" tabindex="0"><div style="min-width:74px"><b>${dmid(d)}</b></div><div class="grow"><div class="num"><b>${r0(t.kcal)}</b> kcal · P ${r0(t.protein)}g · K ${r0(t.carbs)}g · Y ${r0(t.fat)}g</div><div class="mut small">${w?`💧 ${(w/1000).toFixed(1).replace('.',',')} L`:''}${sup?` · 💊 ${sup} takviye`:''}${x.weight?` · ⚖ ${f1(x.weight)} kg`:''}${num(x.gas)?` · 💨 ${num(x.gas)}`:''}</div></div><span class="mut">›</span></div>`;
     }).join('')}</div>`;
     if(all.length>shown.length)h+=`<button class="btn alt full" data-a="hmore">Tümünü göster (${all.length})</button>`;
   }
@@ -1563,6 +1573,11 @@ const A={
   /* su */
   wadd(ds){const d=getDay(V.date);(d.water=d.water||[]).push(+ds.v);save(V.date);render()},
   wcustom(){const el=document.getElementById('wc'),v=num(el&&el.value);if(v<=0||v>5000){toast('Su miktarını 1-5000 ml arasında gir.');return}const d=getDay(V.date);(d.water=d.water||[]).push(r0(v));save(V.date);render()},
+  gas(ds){
+    const cur=num(getDayRO(V.date).gas),n=Math.max(0,Math.min(999,cur+(+ds.n||0)));
+    if(n===cur)return;
+    getDay(V.date).gas=n;save(V.date);render();
+  },
   wundo(){const d=getDay(V.date);if(d.water&&d.water.length){d.water.pop();save(V.date);render()}},
   /* takviye */
   stk(ds){
