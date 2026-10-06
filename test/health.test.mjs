@@ -39,6 +39,15 @@ try {
   ok((await sync(null, { kcal: 300 })).s === 401, 'anahtarsız eşitleme reddedildi');
   ok((await sync('sh_yanlis-anahtar-yanlis-anahtar', { kcal: 300 })).s === 401, 'yanlış anahtar reddedildi');
 
+  // bağlantı yokken elle giriş çalışır
+  r = await call('POST', '/api/burn', { date: TODAY, kcal: 500 }, A);
+  ok(r.s === 200 && r.j.days[TODAY].kcal === 500 && r.j.days[TODAY].src === 'manual', 'bağlantı yokken elle giriş kaydedildi');
+  ok((await call('POST', '/api/burn', { date: TODAY, kcal: -1 }, A)).s === 400, 'elle girişte negatif reddedildi');
+  ok((await call('POST', '/api/burn', { date: ymd(5), kcal: 100 }, A)).s === 400, 'gelecek tarihe elle giriş reddedildi');
+  r = await call('POST', '/api/burn', { date: ymd(-1), kcal: 111 }, A);
+  r = await call('POST', '/api/burn', { date: ymd(-1), kcal: null }, A);
+  ok(r.j.days[ymd(-1)] === undefined, 'elle girilen kayıt silinebiliyor');
+
   r = await call('POST', '/api/sync-key', {}, A);
   const key = r.j.key;
   ok(r.s === 200 && /^sh_[\w-]{30,}$/.test(key), 'anahtar üretildi');
@@ -48,7 +57,7 @@ try {
 
   // temel akış: tarihsiz (bugün), CSRF başlığı olmadan
   r = await sync(key, { kcal: 300 });
-  ok(r.s === 200 && r.j.result === 'saved' && r.j.date === TODAY && r.j.kcal === 300, 'Kısayol: kcal gönderildi, bugüne yazıldı');
+  ok(r.s === 200 && r.j.result === 'saved' && r.j.date === TODAY && r.j.kcal === 300, 'Kısayol: kcal gönderildi, bugüne yazıldı (eskiden elle girilmiş 500\'ün üstüne)');
   r = await call('GET', '/api/burn', undefined, A);
   ok(r.j.days[TODAY].kcal === 300 && r.j.days[TODAY].src === 'sync' && r.j.sync.last > 0, 'yakılan kalori okunuyor, kaynak sync, son eşitleme kayıtlı');
 
@@ -73,17 +82,12 @@ try {
   r = await fetch(base + '/api/health-sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kcal: 111, key }) });
   ok(r.status === 200, 'anahtar JSON gövdesinde de kabul ediliyor');
 
-  // elle giriş sync'i ezmez
+  // Sağlık bağlıyken elle giriş kapalı
   r = await call('POST', '/api/burn', { date: TODAY, kcal: 500 }, A);
-  ok(r.s === 200 && r.j.days[TODAY].kcal === 500 && r.j.days[TODAY].src === 'manual', 'elle giriş kaydedildi');
+  ok(r.s === 409 && r.j.code === 'sync_on', 'Sağlık bağlıyken elle giriş reddedildi (409)');
+  ok((await call('GET', '/api/burn', undefined, A)).j.days[TODAY].kcal === 111, 'reddedilen elle giriş mevcut değeri değiştirmedi (500 yazılmadı)');
   r = await sync(key, { kcal: 900 });
-  ok(r.j.result === 'skipped_manual' && (await call('GET', '/api/burn', undefined, A)).j.days[TODAY].kcal === 500, 'elle girilen değer otomatik veriyle ezilmedi');
-  r = await call('POST', '/api/burn', { date: TODAY, kcal: null }, A);
-  ok(r.j.days[TODAY] === undefined, 'elle girilen kayıt silinebiliyor');
-  r = await sync(key, { kcal: 900 });
-  ok(r.j.result === 'saved', 'silince otomatik eşitleme yine yazabiliyor');
-  ok((await call('POST', '/api/burn', { date: TODAY, kcal: -1 }, A)).s === 400, 'elle girişte negatif reddedildi');
-  ok((await call('POST', '/api/burn', { date: ymd(5), kcal: 100 }, A)).s === 400, 'gelecek tarihe elle giriş reddedildi');
+  ok(r.j.result === 'saved' && r.j.kcal === 900, 'Sağlık verisi yazılmaya devam ediyor');
 
   // kullanıcılar ayrı; arayüzün yazdığı kayıtlar sunucu verisini bozmaz
   ok(Object.keys((await call('GET', '/api/burn', undefined, B)).j.days).length === 0, 'Bora Ali\'nin yakılan kalorisini görmüyor');

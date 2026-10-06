@@ -950,10 +950,10 @@ async function handleApi(req, res, url) {
     if (!Number.isFinite(kcal) || kcal < 0 || kcal > 15000) throw new HttpError(400, 'bad_kcal', 'kcal 0-15000 arasında bir sayı olmalı.');
     const date = burnDate(b.date, 7);
     const stepsN = b.steps === undefined ? NaN : parseNum(b.steps);
-    const h = readHealth(u.id), cur = h.days[date];
+    const h = readHealth(u.id);
     let result = 'saved';
-    if (cur && cur.src === 'manual') result = 'skipped_manual';        // elle girilen değer korunur
-    else if (kcal === 0) result = 'skipped_zero'; // kilitli telefonda Sağlık verisi okunamaz ve 0 gelebilir: dolu değeri ezme
+    // Anahtar açıkken elle giriş kapalıdır; Sağlık'tan gelen değer, eskiden elle girilmiş olanın da üstüne yazar
+    if (kcal === 0) result = 'skipped_zero'; // kilitli telefonda Sağlık verisi okunamaz ve 0 gelebilir: dolu değeri ezme
     else {
       h.days[date] = { kcal: Math.round(kcal), ...(Number.isFinite(stepsN) && stepsN >= 0 && stepsN <= 200000 ? { steps: Math.round(stepsN) } : {}), src: 'sync', ts: Date.now() };
       h.last = Date.now();
@@ -1127,11 +1127,12 @@ async function handleApi(req, res, url) {
     const h = readHealth(user.id);
     return send(res, 200, { days: h.days, sync: { enabled: !!user.sync_hash, last: h.last } });
   }
-  if (p === '/api/burn' && m === 'POST') { // elle giriş; kcal boşsa o günün kaydı silinir
+  if (p === '/api/burn' && m === 'POST') { // elle giriş (yalnızca Apple Sağlık bağlı değilken); kcal boşsa o günün kaydı silinir
     const b = await readBody(req, 2000);
     const date = burnDate(b.date, 400), h = readHealth(user.id);
     if (b.kcal === null || b.kcal === '' || b.kcal === undefined) delete h.days[date];
     else {
+      if (user.sync_hash) throw new HttpError(409, 'sync_on', 'Apple Sağlık bağlıyken yakılan kalori elle girilemez; Sağlık\'tan çek. Elle girmek için Ayarlar → Sağlık\'tan bağlantıyı kapat.');
       const kcal = parseNum(b.kcal);
       if (!Number.isFinite(kcal) || kcal < 0 || kcal > 15000) throw new HttpError(400, 'bad_kcal', 'Yakılan kalori 0-15000 arasında bir sayı olmalı.');
       h.days[date] = { kcal: Math.round(kcal), src: 'manual', ts: Date.now() };

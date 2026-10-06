@@ -82,7 +82,7 @@ Safari/PWA iPhone'un Sağlık verisini doğrudan okuyamaz; bu yüzden iPhone'un 
 - **Gönderilen istek:** `POST https://SENIN-ALAN/api/health-sync`, başlık `Authorization: Bearer ANAHTAR`, gövde `{"kcal": 300, "date": "2026-10-06", "steps": 8200}`. `date` ve `steps` isteğe bağlıdır; tarih son 7 gün içinde olabilir.
 - **Hesap:** Bugün ekranında net kalori = yenen − yakılan; kalan kalori = hedef − net. Analiz sekmesi, hedefe uyum ve koç yorumu da yakılan kaloriyi hesaba katar.
 - **Çift sayım uyarısı:** Profildeki aktivite düzeyi hedefe zaten günlük hareket payı ekler. *Ayarlar → Sağlık → Hedefi hareketsiz bazdan hesapla* açılınca *Hedeflerimi hesapla* aktivite çarpanını 1,2 alır; yakılan kalori ayrıca eklenir. Elle değiştirdiğin hedef yeniden hesaplamada ezilir, bu yüzden otomatik uygulanmaz.
-- **Elle giriş:** Bugün ekranında 🔥 düğmesiyle girilir. Elle girilen değer otomatik gelen veriyle ezilmez; silince otomatik veri yine yazabilir.
+- **Elle giriş:** Apple Sağlık bağlı değilken Bugün ekranında 🔥 düğmesiyle girilir. Sağlık bağlanınca (anahtar üretilince) elle giriş kapanır; sunucu da elle girişi 409 ile reddeder, ekranda yalnızca gelen değer görünür. Daha önce elle girilmiş bir günün üstüne Sağlık verisi yazılır. Elle girmek için *Ayarlar → Sağlık → Bağlantıyı kapat*.
 - **Sınırlar:** iPhone kilitliyken Sağlık verisi okunamaz ve kısayol 0 gönderebilir; sunucu 0'ı yok sayar ve dolu değeri korur. Anahtar sunucuda yalnızca özet (hash) olarak saklanır; kaybedersen yenisini üret. Yanlış anahtar denemeleri sınırlanır. Yakılan kalori verisi kullanıcının `health` kaydında durur, yedeğe ve veritabanı yedeğine dahildir (JSON kullanıcı yedeğine dahil değildir).
 
 ## 6) Yönetici paneli
