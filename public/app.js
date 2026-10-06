@@ -105,7 +105,7 @@ async function burnRefresh(){
   const before=JSON.stringify(HB);
   const ok=await loadBurn();
   if(!ok||JSON.stringify(HB)===before)return false;
-  if(pullAt&&Date.now()-pullAt<600000){pullAt=0;toast('Yakılan kalori güncellendi: '+r0(burnOf(TODAY))+' kcal')}
+  if(pullAt&&Date.now()-pullAt<600000){pullAt=0;toast('Yakılan kalori güncellendi: '+r0(burnOf(TODAY))+' kcal',true)}
   if(!V.burnEdit)render();
   return true;
 }
@@ -457,10 +457,10 @@ document.addEventListener('submit',async e=>{
 
 /* ---------- hata bildirimi ---------- */
 let toastT=null;
-function toast(msg){
+function toast(msg,info){ // info=true: hata değil, bilgi mesajı (kırmızı değil, "Bir sorun oluştu" öneki yok)
   let el=document.getElementById('toast');
   if(!el){el=document.createElement('div');el.id='toast';el.setAttribute('role','alert');el.style.cssText='position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top,0px) + 10px);z-index:9;background:var(--bad);color:#fff;padding:10px 14px;border-radius:12px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.25);max-width:536px;margin:0 auto';document.body.appendChild(el)}
-  el.textContent='Bir sorun oluştu: '+msg;el.style.display='block';
+  el.textContent=(info?'':'Bir sorun oluştu: ')+msg;el.style.background=info?'var(--ink)':'var(--bad)';el.style.color=info?'var(--bg)':'#fff';el.style.display='block';
   clearTimeout(toastT);toastT=setTimeout(()=>{el.style.display='none'},8000);
 }
 // Yalnızca bu uygulamanın kendi hatalarını göster; tarayıcı eklentilerinden/üçüncü taraf betiklerden gelen hatalar kullanıcıyı korkutmasın (konsola yazılır)
@@ -815,8 +815,9 @@ function viewToday(){
       <div class="bar"><i style="width:${Math.max(0,Math.min(100,net/g.kcal*100))}%;background:${over?'var(--bad)':'var(--kcal)'}"></i></div>
       <div class="row between small mut" style="margin-top:8px"><span>Yenen <b class="num" style="color:var(--ink)">${r0(t.kcal)}</b></span>${burn?`<span>Yakılan <b class="num" style="color:var(--ink)">−${r0(burn)}</b></span><span>Net <b class="num" style="color:var(--ink)">${r0(net)}</b></span>`:''}<span>Hedef <b class="num" style="color:var(--ink)">${g.kcal}</b></span></div>
       <div style="margin-top:12px">${deficit!==null?`<span class="chip">${deficit>=0?'Kalori açığı':'Kalori fazlası'}: <b class="num">${Math.abs(r0(deficit))}</b> kcal <span class="mut">(harcama ~${r0(g.tdee+burn)})</span></span>`:''}${(()=>{const lbl=burn?`Yakılan ${r0(burn)} kcal · ${bd.src==='manual'?'elle':'Apple Sağlık'}${bd.steps?' · '+Number(bd.steps).toLocaleString('tr-TR')+' adım':''}`:'';
-        // Sağlık bağlıyken elle giriş yok: yalnızca gösterim
-        return HS.enabled?`<span class="chip">🔥 ${lbl||'Yakılan: veri yok'}</span>`:`<button class="chip" data-a="burnedit" aria-expanded="${!!V.burnEdit}">🔥 ${lbl||'Yakılan kalori ekle'}</button>`})()}${HS.enabled&&isIOS()&&d===TODAY?`<button class="chip" data-a="pullhealth">🔄 Sağlık'tan çek</button>`:''}${!HS.enabled&&d===TODAY?`<button class="chip" data-a="tab" data-t="settings" data-st="health">🍎 Sağlık'a bağla</button>`:''}</div>
+        // Sağlık bağlıyken elle giriş yok: bugün için 🔥 düğmesi yakılan kaloriyi Sağlık'tan otomatik çeker; geçmiş günlerde yalnızca gösterim
+        if(HS.enabled)return d===TODAY?`<button class="chip" data-a="pullhealth">🔥 ${lbl||'Yakılan kalori ekle'}</button>`:`<span class="chip">🔥 ${lbl||'Yakılan: veri yok'}</span>`;
+        return `<button class="chip" data-a="burnedit" aria-expanded="${!!V.burnEdit}">🔥 ${lbl||'Yakılan kalori ekle'}</button>`})()}${HS.enabled&&d===TODAY?`<button class="chip" data-a="pullhealth">🔄 Sağlık'tan çek</button>`:''}${!HS.enabled&&d===TODAY?`<button class="chip" data-a="tab" data-t="settings" data-st="health">🍎 Sağlık'a bağla</button>`:''}</div>
       ${V.burnEdit&&!HS.enabled?`<form data-f="burn" class="row" style="gap:8px;margin-top:10px" autocomplete="off"><input name="kcal" inputmode="numeric" placeholder="Yakılan kcal (aktif enerji)" aria-label="Yakılan kalori" value="${burn?r0(burn):''}"><button class="btn sm">Kaydet</button>${HB[d]?`<button type="button" class="btn alt sm" data-a="burndel">Sil</button>`:''}</form>`:''}
     </div>
     <div class="card grid3">
@@ -1187,7 +1188,7 @@ function setHealth(){
     <p class="small mut" style="margin:4px 0 8px">iPhone'daki Sağlık uygulamasında kayıtlı <b>aktif enerji</b> (yürüyüş, kardiyo, antrenman) Bugün ekranındaki <b>🔄 Sağlık'tan çek</b> düğmesine basınca gelir ve o günün kalorisinden düşülür: 2800 kcal yedin, 300 kcal yaktıysan net 2500 kcal sayılır. Safari/ana ekran uygulaması Sağlık verisini doğrudan okuyamadığı için düğme, iPhone'a kurduğun bir kısayolu çalıştırır; kısayol veriyi okuyup buraya gönderir. Kısayolu bir kez kurman gerekir.</p>
     ${HS.enabled?'':`<div class="small" style="margin-bottom:10px;padding:10px 12px;border-radius:12px;background:var(--card2,rgba(127,127,127,.12))"><b>Nereden başlayacağım?</b><br>1) Aşağıdaki <b>Anahtar üret</b> düğmesine bas.<br>2) Çıkan anahtarı kopyala, aşağıdaki <b>Kısayol kurulumu</b> adımlarını iPhone'da uygula.<br>3) Bugün ekranında <b>🔄 Sağlık'tan çek</b> düğmesi belirir.${isIOS()?'':'<br><span class="mut">Not: Kısayol iPhone\'da kurulur; bu sayfayı iPhone\'da da açabilirsin.</span>'}</div>`}
     <div class="small" style="margin-bottom:10px">Durum: ${HS.enabled?`<b style="color:var(--fat)">● Bağlı</b> · son eşitleme ${HS.last?fmtTs(HS.last):'henüz yok'}`:'<b>○ Kurulmadı</b>'}</div>
-    <div class="btnrow"><button class="btn sm" data-a="synckey">${HS.enabled?'Yeni anahtar üret':'Anahtar üret'}</button>${HS.enabled&&isIOS()?'<button class="btn alt sm" data-a="pullhealth">🔄 Şimdi Sağlık\'tan çek</button>':''}${HS.enabled?'<button class="btn alt sm" data-a="syncoff">Bağlantıyı kapat</button>':''}</div></div>`;
+    <div class="btnrow"><button class="btn sm" data-a="synckey">${HS.enabled?'Yeni anahtar üret':'Anahtar üret'}</button>${HS.enabled?'<button class="btn alt sm" data-a="pullhealth">🔄 Şimdi Sağlık\'tan çek</button>':''}${HS.enabled?'<button class="btn alt sm" data-a="syncoff">Bağlantıyı kapat</button>':''}</div></div>`;
   if(key)h+=`<div class="card" style="border-color:var(--pro)"><h3>Kişisel anahtarın</h3><div class="code num" id="rc" style="word-break:break-all">${esc(key)}</div>
     <p class="small mut">Bir daha gösterilmeyecek; şimdi kısayola yapıştır. Kaybedersen yenisini üret (eskisi iptal olur). Bu anahtarı kimseyle paylaşma.</p>
     <div class="btnrow"><button class="btn alt sm" data-a="copycode">Kopyala</button><button class="btn sm" data-a="synckeyok">Tamam</button></div></div>`;
@@ -1650,7 +1651,8 @@ Object.assign(A,{
   async logout(){await leaveApp();render()},
   async retryboot(){await boot()},
   pullhealth(){
-    if(!HS.enabled){toast('Önce Ayarlar → Sağlık bölümünden bağlantıyı kur.');return}
+    if(!HS.enabled){toast('Önce Ayarlar → Sağlık bölümünden bağlantıyı kur.',true);return}
+    if(!isIOS()){toast('Bu düğme iPhone\'da çalışır: Kısayollar uygulaması gerekir.',true);return}
     pullAt=Date.now();
     let u='shortcuts://run-shortcut?name='+encodeURIComponent(SC_NAME);
     // Tarayıcıdan açıldıysa iş bitince geri dön; ana ekrandaki uygulamada https adresi Safari'yi açacağı için eklenmez
@@ -1674,7 +1676,7 @@ Object.assign(A,{
     try{await api('/sync-key/revoke',{method:'POST',body:{}});HS.enabled=false;V.syncKey=null;V.smsg=null}catch(e){V.smsg={ok:false,t:errMsg(e)}}
     render();
   },
-  async copyurl(){try{await navigator.clipboard.writeText(location.origin+'/api/health-sync');toast('Adres kopyalandı.')}catch(e){toast('Kopyalanamadı; adresi elle yaz.')}},
+  async copyurl(){try{await navigator.clipboard.writeText(location.origin+'/api/health-sync');toast('Adres kopyalandı.',true)}catch(e){toast('Kopyalanamadı; adresi elle yaz.')}},
   theme(ds){S.prefs.theme=ds.v;applyTheme();persist('core');render()},
   ulw(){S.prefs.ulWarn=S.prefs.ulWarn===false;persist('core');render()}
 });
