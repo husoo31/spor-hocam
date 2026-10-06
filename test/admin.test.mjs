@@ -206,7 +206,7 @@ try {
   const acts = new Set(r.j.log.map(x => x.action));
   ok(['view_data', 'create_invite', 'update_user', 'reset_password', 'update_settings', 'wipe_data', 'delete_user'].every(a => acts.has(a)), 'yönetici işlem kaydı tüm işlem türlerini içeriyor');
   ok((await call('GET', '/api/admin/log', undefined, jar())).s === 401, 'işlem kaydı oturumsuz erişime kapalı');
-  ok(!/sifre12345|admin-sifre|bora-|temp/i.test(log) && !JSON.stringify(r.j).includes(temp), 'günlüklerde ve kayıtta şifre yok');
+  ok(!/sifre12345|admin-sifre|bora-|temp/i.test(log.split(dir).join('')) && !JSON.stringify(r.j).includes(temp), 'günlüklerde ve kayıtta şifre yok');
 } catch (e) { fail++; console.log('TEST HATASI', e); }
 srv.kill(); mock.close();
 console.log(`\n${pass} geçti, ${fail} başarısız`);

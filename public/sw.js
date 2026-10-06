@@ -1,6 +1,6 @@
 // Spor Hocam servis çalışanı: arayüzü önbelleğe alır (çevrimdışı açılır), API isteklerine dokunmaz.
-const CACHE = 'sh-shell-v5';
-const SHELL = ['/', '/app.js', '/style.css', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
+const CACHE = 'sh-shell-v8';
+const SHELL = ['/', '/app.js', '/barcode-util.js', '/style.css', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

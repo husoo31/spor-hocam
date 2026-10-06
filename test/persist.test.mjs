@@ -32,7 +32,8 @@ const post = (p, body) => fetch(base + p, { method: 'POST', headers: { 'Content-
 let srv = start();
 try {
   await ready();
-  ok(!fs.existsSync(path.join(dir, 'backups')), 'boş veritabanı için yedek alınmadı');
+  const bdirEmpty = path.join(dir, 'backups');
+  ok(!fs.existsSync(bdirEmpty) || fs.readdirSync(bdirEmpty).every(f => !f.startsWith('start-')), 'boş veritabanı için açılış yedeği alınmadı');
   let r = await post('/api/register', { username: 'Ali', password: 'sifre12345-xyz', invite: 'davet-kodu-123', consent: true });
   ok(r.status === 200, 'kayıt oldu');
   await stop(srv);

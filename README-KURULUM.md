@@ -50,11 +50,12 @@ test/*.test.mjs      testler:  node test/server.test.mjs, test/ref.test.mjs, tes
 ## 4) Yapay zekâ modeli ve maliyet
 `AI_CHAIN` soldan sağa denenir; ilk model hata verirse ya da ücretsiz kotası dolarsa sıradakine geçilir:
 ```
-AI_CHAIN=gemini:gemini-3-flash-preview,gemini:gemini-2.5-flash,gemini:gemini-2.5-flash-lite
+AI_CHAIN=gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite,gemini:gemini-3.5-flash,groq:openai/gpt-oss-120b,groq:openai/gpt-oss-20b,groq:qwen/qwen3.8-27b,openrouter:openrouter/free
 ```
 - **Model adlarını doğrula** (Google adları değiştirir): `python test_models.py --key ANAHTAR --list`
 - Gemini 3.8 Flash denemek için: `gemini:gemini-3.8-flash` (ücretsiz katman günlük limiti çok düşük olabilir, ücretli fiyat 1 Ocak 2027'de iki katına çıkıyor).
 - Ücretsiz modellere düşmek için OpenRouter: `OPENROUTER_API_KEY` gir ve zincire `openrouter:MODEL_ADI:free` ekle.
+- **NVIDIA (DeepSeek) yedeği:** `NVIDIA_API_KEY` (https://build.nvidia.com) tanımlayıp zincirin SONUNA `nvidia:deepseek-ai/deepseek-v4.1-flash` ekleyebilirsin. Bu bir metin modelidir: fotoğraflı isteklerde otomatik atlanır. Ücretsiz uç noktada cevap 1-2 dakika sürebilir (gerçek ölçüm: ~117 sn), bu yüzden yalnızca diğer modeller başarısız olursa devreye girmesi için en sona konur. Doğruluğu gerçek bir yemek isteğinde doğrulandı (haşlanmış yumurta 155 kcal/100 g).
 - **Maliyeti düşüren şeyler:** ortak önbellek (aynı soru ikinci kez API'ye gitmez), kişi başı günlük limit (`AI_DAILY_LIMIT_PER_USER`, varsayılan 80), herkes için toplam limit (300). Kota dolunca yiyecek elle girilebilir; uygulama yapay zekâsız da çalışır.
 - Hassas mod (2. denetim adımı) çağrı sayısını iki katına çıkarır; Ayarlar → Tercihler'den kapatılabilir.
 
@@ -67,7 +68,10 @@ Yemek hesaplaması üç katmanlı çalışır; yapay zekâ değerleri uydurmak y
    - Bulunan aday, yapay zekâ tahminiyle **karşılaştırılır**. Kalori farkı ≤ %25 ve makro farkı makulse kabul edilir ("📚 USDA: …" satırı görünür). Uyuşmazsa **kabul edilmez**, yalnızca öneri olarak sunulur; hangisinin doğru olduğunu sen seçersin. Böylece yanlış eşleşme (örn. "pirinç" → "pirinç unu") sessizce değerleri bozmaz.
 3. **Denetim adımı yalnızca referansla doğrulanamayan kalemlere** uygulanır (Türk yemekleri, bulunamayanlar). Hepsi doğrulandıysa ikinci yapay zekâ çağrısı hiç yapılmaz; hem maliyet hem hata düşer.
 
-**Barkod:** Bugün sekmesinde "▥ Barkod" ile numara yazılır ya da (Chrome/Android'de) kamerayla taranır; yapay zekâ gerekmez. iPhone Safari kamerayla barkod okumayı desteklemez, orada numarayı elle yaz.
+**Barkod ve kamera:**
+- **Barkod tarama her cihazda çalışır.** Tarayıcının yerleşik okuyucusu (Chrome/Android) varsa o, yoksa uygulamayla gelen ZXing okuyucusu (bilgisayar, iPhone Safari dahil) kullanılır. Kontrol hanesi geçmeyen (yanlış okunmuş) barkod reddedilir ve aynı kod üst üste iki okumada görülmeden kabul edilmez. Canlı tarama zorlaşırsa "Fotoğraftan oku" ile barkodun fotoğrafı seçilebilir; numara elle de yazılabilir.
+- **Kamerayla fotoğraf:** Bugün sekmesinde "🍽 Yemek fotoğrafı" ve "🏷 Etiket fotoğrafı" düğmeleri uygulama içi kamerayı açar (deklanşör + galeriden seçme).
+- **Yemek fotoğrafı** yapay zekâya porsiyonu tabak/çatal/bardak gibi referans nesnelerle ölçtürür; gram tahmini bir aralıkla ("140–230 g") ve "fotoğraftan tahmin" uyarısıyla gösterilir, güven en fazla "orta" olur. Miktarı tartıyla düzelttiğinde değerler güncellenir. Görüntülü yemek işleri "complex" model zincirini (`AI_CHAIN_COMPLEX`) kullanır; USDA/Open Food Facts doğrulaması yemek fotoğrafında da çalışır. **Etiket fotoğrafında** değerler etikettten okunur, referans araması yapılmaz.
 
 Sınırlar: USDA'da Türk yemekleri yoktur, onlar yapay zekâ tahmini + senin "Ürünlerim" kayıtlarınla gelir. Open Food Facts topluluk verisidir; eksik ya da hatalı kayıt olabilir, bu yüzden önizlemede "etiketle karşılaştır" uyarısı çıkar. Referanstan gelen kalemlerde kaynakta olmayan vitamin/mineral sayısı gösterilir; o değerler toplamlara dahil edilmez (tahmin yürütülmez). Aramalar sunucuda 30 gün önbelleğe alınır; Open Food Facts'in dakikadaki istek sınırına uyulur.
 
@@ -107,10 +111,23 @@ Safari/PWA iPhone'un Sağlık verisini doğrudan okuyamaz; bu yüzden iPhone'un 
 - **Güncelleme:** kodu GitHub'a gönder → Coolify'da *Redeploy* (ya da otomatik deploy aç). Veriler volume'da kalır.
 - **Güncelleme verileri silmez:** kod hiçbir tabloyu baştan oluşturmaz; şema değişiklikleri yalnızca "yoksa ekle" biçimindedir. Silinen tek şey süresi dolmuş oturumlar ve eski önbellekler. Kullanıcı verisi yalnızca kullanıcı ya da yönetici kendisi silerse silinir.
 - **Volume koruması:** `/data` kalıcı bir volume değilse (yani güncelleme verileri götürecekse) sunucu, veritabanı yokken **başlamayı reddeder** ve günlüğe `DURDURULDU: ... kalıcı bir volume değil` yazar. Veritabanı varsa açılır ama günlükte `UYARI` verir. Bilerek geçici kullanacaksan `ALLOW_EPHEMERAL_DATA=true`. (Yalnızca Docker/Linux'ta çalışır.)
-- **Otomatik yedek:** sunucu her açılışta (şema değişikliğinden önce) ve her 24 saatte bir `/data/backups/` içine tutarlı bir kopya alır: açılış yedeklerinden son 5, günlük yedeklerden son 14 tane tutulur (`BACKUP_KEEP_START`, `BACKUP_KEEP_DAILY`). Boş veritabanı yedeklenmez. Bu yedekler **aynı volume'da** durur; bozuk güncellemeye ve hatalı şema değişikliğine karşı korur, volume'un kendisinin silinmesine karşı korumaz. Onun için `/data/backups/` içindeki dosyaları ara sıra başka bir yere indir (Coolify'ın kendi volume yedeği ya da Hetzner/sunucu snapshot'ı da olur).
+- **Güncelleme anı yedeği:** sunucu her açılışta, şema değişikliğinden **önce**, `/data/backups/start-*.db` olarak tutarlı bir kopya alır (son 5 tane, `BACKUP_KEEP_START`). Böylece hatalı bir güncelleme geri alınabilir. Günlük doğrulanmış yedek ve sunucu diskine kopyalama aşağıdaki "Veri kaybı" satırında anlatılanlardır. Bu yedekler aynı volume'dadır; volume'un kendisinin silinmesine karşı korumaz.
 - **Yönetici panelinden indirme:** *Ayarlar → Yönetim → Sistem → Veritabanı yedeği* tüm veritabanının anlık kopyasını `.db` dosyası olarak indirir. Dosya tüm kullanıcıların verilerini ve şifre özetlerini içerir; bu yüzden yalnızca yönetici indirebilir, yönetici şifresi yeniden istenir ve işlem *Yönetim → Kayıt* sekmesine yazılır. Volume silinse bile elinde kalması için bunu ara sıra indirip güvenli bir yere koy.
 - **Yedekten dönmek:** uygulamayı durdur, `/data/backups/` içindeki dosyayı `/data/spor.db` olarak kopyala (eski `spor.db-wal` ve `spor.db-shm` dosyalarını sil), uygulamayı başlat.
 - **Kullanıcı yedeği:** her kullanıcı *Ayarlar → Veri → Yedeği indir* ile kendi verisini JSON olarak alabilir.
+
+## 7b) Kesintisizlik: bir şey bozulduğunda ne olur
+| Arıza | Ne olur |
+|---|---|
+| Bir yapay zekâ modeli kapanır / kotası dolar / yanıt vermez | Zincirdeki sıradaki modele geçilir. Bozuk model 1 dk–6 saat arası **geçici dışlanır** (devre kesici), her istekte zaman kaybettirmez. Fotoğrafsız bekleme en fazla 35 sn. Durum panelinde "Yapay zekâ sırası" görünür. |
+| Gemini tamamen düşer | OpenRouter / Groq / Cerebras / Mistral / NVIDIA yedekleri (anahtarları tanımlıysa). Anahtar eklemek için ilgili `*_API_KEY` ve `AI_CHAIN`. |
+| **Tüm yapay zekâ servisleri** düşer | Uygulama yazdığını **yerel besin tablosundan** (USDA SR Legacy kopyası, 7793 besin, internetsiz) yaklaşık hesaplar. Tabloda olmayan yemeği (menemen, lahmacun…) **uydurmaz**, "bulunamadı" der. |
+| USDA / Open Food Facts çöker | Yerel tablo ve 30 günlük önbellek devreye girer. |
+| Uygulama takılır / sağlıksız olur | `ops/spor-watchdog.sh` (cron, dakikada bir) yalnızca bu konteyneri yeniden başlatır. Konteyner yoksa ya da dışarıdan erişilemiyorsa kaydeder (Coolify/Traefik'e dokunmaz). |
+| Veri kaybı | Veritabanı günde bir **doğrulanmış** (bütünlük denetimli) yedeklenir, son 14 yedek konteynerde; `ops/spor-backup-sync.sh` (cron, 04:15) bunları sunucu diskine (`~/spor-backups`, son 30) kopyalar. Yönetici panelinde "Şimdi yedekle". |
+
+**Geri yükleme:** uygulamayı durdur, yedeği `/data/spor.db` olarak koy (`spor.db-wal` ve `spor.db-shm` dosyalarını sil), uygulamayı başlat.
+**Sınırlar:** yedekler aynı sunucuda durur; sunucu/disk tümden giderse kaybolur. Gerçek felaket koruması için `~/spor-backups` klasörünü düzenli olarak başka bir yere (bilgisayarın, bulut depolama) kopyala. Tek sunucu olduğu için sunucunun kendisi çökerse hizmet durur.
 
 ## 8) Sorun giderme
 | Belirti | Çözüm |

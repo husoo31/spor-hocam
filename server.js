@@ -8,6 +8,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createRefDb, pickBest } from './refdb.js';
+import { createLocalFoods } from './localfoods.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const env = process.env;
@@ -19,7 +20,9 @@ const TRUST_PROXY = env.TRUST_PROXY !== 'false';
 const TZ = env.AI_TZ || 'Europe/Istanbul';
 const GEMINI_BASE = (env.GEMINI_BASE || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '');
 const OPENROUTER_BASE = (env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
-const DEFAULT_CHAIN = 'gemini:gemini-3-flash-preview,gemini:gemini-2.5-flash,gemini:gemini-2.5-flash-lite';
+const NVIDIA_BASE = (env.NVIDIA_BASE || 'https://integrate.api.nvidia.com/v1').replace(/\/$/, '');
+// Ölçüme göre sıralı (16 yemek, USDA referansı): en doğru + hızlı + güvenilir önde. Yavaş sağlayıcılar (NVIDIA DeepSeek ~200 sn, ücretsiz OpenRouter Qwen ~50 sn) varsayılana alınmadı.
+const DEFAULT_CHAIN = 'gemini:gemini-3.1-flash-lite,gemini:gemini-3.5-flash-lite,gemini:gemini-3.5-flash,groq:openai/gpt-oss-120b,groq:openai/gpt-oss-20b,groq:qwen/qwen3.8-27b,openrouter:openrouter/free';
 const CHAINS = {
   default: parseChain(env.AI_CHAIN || DEFAULT_CHAIN),
   quick: parseChain(env.AI_CHAIN_QUICK || env.AI_CHAIN || DEFAULT_CHAIN),
@@ -81,7 +84,7 @@ if (process.platform === 'linux' && fs.existsSync('/.dockerenv') && env.ALLOW_EP
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new DatabaseSync(DB_FILE);
 
-// Tutarlı anlık yedek (VACUUM INTO). kind: 'start' (açılışta, şema değişikliğinden önce) ya da 'daily'. En yeni `keep` tanesi tutulur.
+// Güncelleme anı güvencesi: açılışta, şema değişikliğinden ÖNCE tutarlı bir kopya alır (start-*.db, son `keep` tanesi). Günlük doğrulanmış yedek aşağıdaki runBackup()'tadır.
 function backupDb(kind, keep) {
   try {
     if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").get()) return;
@@ -208,6 +211,8 @@ const refCache = {
   put(key, value) { q.fcPut.run(key, JSON.stringify(value === undefined ? null : value), Date.now()); },
 };
 const ref = createRefDb({ env, cache: refCache });
+// Yapay zekâ ve USDA/OFF çökse bile çalışan yerel besin tablosu (USDA SR Legacy kopyası)
+const localFoods = createLocalFoods({ file: path.join(__dirname, 'localdata', 'foods.json') });
 function tx(fn) {
   db.exec('BEGIN');
   try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
@@ -273,6 +278,44 @@ setInterval(() => {
     q.fcPurge.run(Date.now() - 120 * 864e5);
   } catch (e) { console.error('temizlik hatası', e.message); }
 }, 3600000).unref();
+
+/* ------------------------------------------------------------------ otomatik yedek
+   SQLite'ın VACUUM INTO komutu, yazma sürerken bile tutarlı bir kopya üretir (dosyayı elle kopyalamak WAL yüzünden bozuk yedek verebilir).
+   Her yedek açılıp bütünlük denetiminden geçirilir; yalnızca geçenler saklanır. Eskiler döndürülür. */
+const BACKUP_KEEP = Math.max(3, Number(env.BACKUP_KEEP) || 14), BACKUP_EVERY_H = Number(env.BACKUP_EVERY_HOURS) || 24;
+fs.mkdirSync(BACKUP_DIR, { recursive: true });
+const BACKUP_RE = /^spor-\d{8}-\d{4}\.db$/;
+const listBackups = () => fs.readdirSync(BACKUP_DIR).filter(f => BACKUP_RE.test(f)).sort();
+function backupInfo() {
+  const l = listBackups(), f = l[l.length - 1];
+  if (!f) return { count: 0, last: null };
+  const st = fs.statSync(path.join(BACKUP_DIR, f));
+  return { count: l.length, last: { file: f, at: st.mtimeMs, bytes: st.size } };
+}
+function runBackup() {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 13);
+  const file = path.join(BACKUP_DIR, `spor-${stamp}.db`), tmp = file + '.tmp';
+  try { fs.unlinkSync(tmp); } catch (e) { /* yok */ }
+  db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+  const chk = new DatabaseSync(tmp, { readOnly: true });
+  try {
+    const r = chk.prepare('PRAGMA integrity_check').get();
+    if (!r || r.integrity_check !== 'ok') throw new Error('bütünlük denetimi başarısız');
+    chk.prepare('SELECT COUNT(*) AS n FROM users').get(); // tablo okunabiliyor mu
+  } catch (e) { chk.close(); try { fs.unlinkSync(tmp); } catch (x) { /* yok */ } throw e; }
+  chk.close();
+  fs.renameSync(tmp, file);
+  for (const old of listBackups().slice(0, -BACKUP_KEEP)) { try { fs.unlinkSync(path.join(BACKUP_DIR, old)); } catch (e) { /* yok */ } }
+  return backupInfo().last;
+}
+function backupIfDue() {
+  try {
+    const { last } = backupInfo();
+    if (!last || Date.now() - last.at > BACKUP_EVERY_H * 3600000) { const r = runBackup(); console.log(`[yedek] ${r.file} (${r.bytes} bayt)`); }
+  } catch (e) { console.error('[yedek] HATA', e.message); }
+}
+setTimeout(backupIfDue, Number(env.BACKUP_DELAY_MS) || 5000).unref();
+setInterval(backupIfDue, Number(env.BACKUP_CHECK_MS) || 3600000).unref();
 
 function clientIp(req) {
   if (TRUST_PROXY) {
@@ -395,43 +438,123 @@ async function callGemini(model, prompt, images, wantJson, timeout) {
   if (!text) throw new AiErr(c && c.finishReason === 'SAFETY' ? 'refused' : 'empty_completion', 'Boş cevap');
   return text;
 }
-async function callOpenRouter(model, prompt, images, wantJson, timeout) {
-  const key = env.OPENROUTER_API_KEY;
-  if (!key) throw new AiErr('ai_disabled', 'OpenRouter anahtarı tanımlı değil.');
-  const content = [{ type: 'text', text: prompt }, ...images.map(i => ({ type: 'image_url', image_url: { url: `data:${i.mime};base64,${i.data}` } }))];
-  const body = { model, messages: [{ role: 'user', content: images.length ? content : prompt }] };
-  if (wantJson) body.response_format = { type: 'json_object' };
-  const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, 'X-Title': 'Spor Hocam' },
-    body: JSON.stringify(body), signal: AbortSignal.timeout(timeout),
-  });
-  if (!r.ok) throw new AiErr(r.status === 429 ? 'rate_limited' : 'upstream_error', `OpenRouter ${r.status}`, r.status);
-  const j = await r.json();
-  const text = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
-  if (!text) throw new AiErr('empty_completion', 'Boş cevap');
-  return String(text);
+/* OpenAI uyumlu sağlayıcılar (aynı istek biçimi): OpenRouter, Groq, Cerebras, Mistral. Anahtar yoksa "kapalı" sayılır. */
+const OPENAI_COMPAT = {
+  openrouter: { name: 'OpenRouter', base: OPENROUTER_BASE, keyEnv: 'OPENROUTER_API_KEY', extra: { 'X-Title': 'Spor Hocam' } },
+  groq: { name: 'Groq', base: (env.GROQ_BASE || 'https://api.groq.com/openai/v1').replace(/\/$/, ''), keyEnv: 'GROQ_API_KEY' },
+  cerebras: { name: 'Cerebras', base: (env.CEREBRAS_BASE || 'https://api.cerebras.ai/v1').replace(/\/$/, ''), keyEnv: 'CEREBRAS_API_KEY' },
+  mistral: { name: 'Mistral', base: (env.MISTRAL_BASE || 'https://api.mistral.ai/v1').replace(/\/$/, ''), keyEnv: 'MISTRAL_API_KEY' },
+};
+function callOpenAICompat(prov) {
+  const c = OPENAI_COMPAT[prov];
+  return async (model, prompt, images, wantJson, timeout) => {
+    const key = env[c.keyEnv];
+    if (!key) throw new AiErr('ai_disabled', `${c.name} anahtarı tanımlı değil.`);
+    const content = [{ type: 'text', text: prompt }, ...images.map(i => ({ type: 'image_url', image_url: { url: `data:${i.mime};base64,${i.data}` } }))];
+    const body = { model, messages: [{ role: 'user', content: images.length ? content : prompt }] };
+    if (wantJson) body.response_format = { type: 'json_object' };
+    const r = await fetch(`${c.base}/chat/completions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, ...(c.extra || {}) },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(timeout),
+    });
+    if (!r.ok) throw new AiErr(r.status === 429 ? 'rate_limited' : 'upstream_error', `${c.name} ${r.status}`, r.status);
+    const j = await r.json();
+    const text = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+    if (!text) throw new AiErr('empty_completion', 'Boş cevap');
+    return String(text);
+  };
 }
-const PROVIDERS = { gemini: callGemini, openrouter: callOpenRouter };
-const aiEnabled = () => Object.values(CHAINS).some(ch => ch.some(e => (e.provider === 'gemini' && env.GEMINI_API_KEY) || (e.provider === 'openrouter' && env.OPENROUTER_API_KEY)));
+/* NVIDIA (build.nvidia.com, OpenAI uyumlu). DeepSeek gibi "düşünen" modeller cevabı önce reasoning_content'te düşünür;
+   ücretsiz uç noktada ilk parça ~1 dk sürebilir, bu yüzden akışlı okunur ve yalnızca asıl cevap (content) alınır. Görsel desteklemez. */
+async function callNvidia(model, prompt, images, wantJson, timeout) {
+  const key = env.NVIDIA_API_KEY;
+  if (!key) throw new AiErr('ai_disabled', 'NVIDIA anahtarı tanımlı değil.');
+  const r = await fetch(`${NVIDIA_BASE}/chat/completions`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, Accept: 'text/event-stream' },
+    body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 16384, stream: true }),
+    signal: AbortSignal.timeout(timeout),
+  });
+  if (!r.ok) throw new AiErr(r.status === 429 ? 'rate_limited' : 'upstream_error', `NVIDIA ${r.status}`, r.status);
+  const dec = new TextDecoder(); let buf = '', text = '';
+  for await (const chunk of r.body) {
+    buf += dec.decode(chunk, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!line.startsWith('data:')) continue;
+      const d = line.slice(5).trim();
+      if (!d || d === '[DONE]') continue;
+      try { const j = JSON.parse(d); const c = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content; if (typeof c === 'string') text += c; } catch (e) { /* eksik parça */ }
+    }
+  }
+  if (!text.trim()) throw new AiErr('empty_completion', 'Boş cevap');
+  return text;
+}
+const PROVIDERS = { gemini: callGemini, openrouter: callOpenAICompat('openrouter'), groq: callOpenAICompat('groq'), cerebras: callOpenAICompat('cerebras'),
+  mistral: callOpenAICompat('mistral'), nvidia: callNvidia };
+const KEY_ENV = { gemini: 'GEMINI_API_KEY', openrouter: 'OPENROUTER_API_KEY', groq: 'GROQ_API_KEY', cerebras: 'CEREBRAS_API_KEY', mistral: 'MISTRAL_API_KEY', nvidia: 'NVIDIA_API_KEY' };
+// Fotoğraf okuyabilir mi? Gemini/OpenRouter/Mistral evet; NVIDIA DeepSeek ve Cerebras hayır; Groq yalnızca görüntü destekli modellerde (scout/maverick/vision/qwen3.5+; gpt-oss metin modelidir)
+const canImage = e => !['nvidia', 'cerebras'].includes(e.provider) && (e.provider !== 'groq' || /scout|maverick|vision|llava|qwen\/qwen3\.[5-9]/i.test(e.model));
+const aiEnabled = () => Object.values(CHAINS).some(ch => ch.some(e => PROVIDERS[e.provider] && env[KEY_ENV[e.provider]]));
+
+/* ---- devre kesici: bozuk bir model her istekte zaman kaybettirmesin ----
+   Hata türüne göre geçici dışlanır (429: 1 dk→30 dk, 404/401/403: 5 dk→6 sa, 5xx/zaman aşımı: 15 sn→5 dk); başarıyla sıfırlanır.
+   Hepsi dışlanmışsa yine de sırayla denenir (kurtarma fark edilsin). */
+const BREAKER = new Map();
+const FAST_MS = Number(env.AI_FAST_TIMEOUT_MS) || 35000, FAST_IMG_MS = Number(env.AI_FAST_TIMEOUT_IMG_MS) || 60000; // son çare olmayan modele tanınan azami süre
+const entryKey = e => `${e.provider}:${e.model}`;
+const breakerLeft = e => { const b = BREAKER.get(entryKey(e)); return b && b.until > Date.now() ? b.until - Date.now() : 0; };
+function breakerFail(e, err) {
+  const k = entryKey(e), b = BREAKER.get(k) || { fails: 0 };
+  b.fails++;
+  const st = err.status, n = Math.min(b.fails - 1, 8);
+  const ms = err.code === 'rate_limited' ? Math.min(60000 * 2 ** n, 30 * 60000)
+    : [401, 403, 404].includes(st) ? Math.min(5 * 60000 * 2 ** n, 6 * 3600000)
+    : Math.min(15000 * 2 ** n, 5 * 60000);
+  b.until = Date.now() + ms; b.last = { code: err.code || 'upstream_error', status: st || null, at: Date.now() };
+  BREAKER.set(k, b);
+}
+const breakerOk = e => BREAKER.delete(entryKey(e));
+function chainState(chain) {
+  return chain.filter(e => PROVIDERS[e.provider] && env[KEY_ENV[e.provider]]).map(e => {
+    const left = breakerLeft(e), b = BREAKER.get(entryKey(e));
+    return { model: entryKey(e), state: left ? 'bekliyor' : 'hazır', seconds: Math.ceil(left / 1000), reason: left && b && b.last ? (b.last.status ? `HTTP ${b.last.status}` : b.last.code) : '', image: canImage(e) };
+  });
+}
 
 async function runChain(chain, prompt, images, wantJson, tier) {
   const timeout = tier === 'complex' ? 120000 : 75000;
-  let last = null;
-  for (const e of chain) {
-    const fn = PROVIDERS[e.provider];
-    if (!fn) continue;
+  const usable = chain.filter(e => PROVIDERS[e.provider] && env[KEY_ENV[e.provider]] && !(images.length && !canImage(e)));
+  const lastIdx = usable.length - 1;
+  let last = null, jsonErr = null; // jsonErr: bir model ulaşıldı ama bozuk cevap verdi; bu, sonradan gelen bağlantı hatalarından daha bilgilendiricidir
+  const attempt = async (e, isLast) => {
+    // her modele kısa süre tanı (yavaş olan NVIDIA hariç): asılan bir model sıradakini ve yedek tabloyu geciktirmesin
+    const t = e.provider === 'nvidia' ? Math.max(timeout, 150000) : Math.min(timeout, images.length ? FAST_IMG_MS : FAST_MS);
     try {
-      const text = await fn(e.model, prompt, images, wantJson, timeout);
-      if (!wantJson) return { text, model: `${e.provider}:${e.model}` };
+      const text = await PROVIDERS[e.provider](e.model, prompt, images, wantJson, t);
+      if (!wantJson) { breakerOk(e); return { text, model: entryKey(e) }; }
       const parsed = extractJson(text);
-      if (parsed && typeof parsed === 'object') return { json: parsed, model: `${e.provider}:${e.model}` };
-      last = new AiErr('invalid_json', 'Cevap okunamadı.');
+      if (parsed && typeof parsed === 'object') { breakerOk(e); return { json: parsed, model: entryKey(e) }; }
+      last = jsonErr = new AiErr('invalid_json', 'Cevap okunamadı.');
+      console.error(`[ai] ${entryKey(e)} -> invalid_json`);
     } catch (err) {
       last = err instanceof AiErr ? err : new AiErr('upstream_error', String(err && err.message || err));
-      console.error(`[ai] ${e.provider}:${e.model} -> ${last.code} ${last.message}`);
+      if (err && err.name === 'TimeoutError') last = new AiErr('timeout', 'Zaman aşımı');
+      breakerFail(e, last);
+      console.error(`[ai] ${entryKey(e)} -> ${last.code} ${last.message}`);
     }
+    return null;
+  };
+  const skipped = [];
+  for (let i = 0; i < usable.length; i++) {
+    const e = usable[i];
+    if (breakerLeft(e)) { skipped.push([e, i === lastIdx]); continue; }
+    const r = await attempt(e, i === lastIdx);
+    if (r) return r;
   }
-  throw last || new AiErr('ai_disabled', 'Yapay zekâ ayarlanmamış.');
+  // sağlıklı model kalmadıysa dışlananları da sırayla bir kez dene
+  for (const [e, isLast] of skipped) { const r = await attempt(e, isLast); if (r) return r; }
+  throw jsonErr || last || new AiErr('ai_disabled', 'Yapay zekâ ayarlanmamış.');
 }
 
 async function handleAi(req, res, user) {
@@ -498,6 +621,67 @@ function lookupLimit(userId, perTenMin) {
   if (e.n > perTenMin) throw new HttpError(429, 'rate_limited', 'Çok sık arama yapıldı, birkaç dakika sonra tekrar dene.');
 }
 const STOP = new Set(['the', 'and', 'with', 'without', 'of', 'in', 'a']);
+/* ------------------------------------------------------------------ sistem durumu
+   Giriş yapmış kullanıcı, dış servislerin açık olup olmadığını ve cevap sürelerini (ms) görür.
+   Hafif "okuma" istekleri kullanılır (yapay zekâ üretim kotası harcanmaz); sonuç 20 sn önbelleğe alınır. */
+const STATUS_TTL = 20000;
+let statusCache = { at: 0, data: null }, statusRun = null;
+async function probe(id, name, check) {
+  const t0 = performance.now();
+  const done = (state, detail) => ({ id, name, state, ms: Math.round(performance.now() - t0), detail });
+  try {
+    const r = await check();
+    if (r.off) return { id, name, state: 'off', ms: null, detail: r.off };
+    const d = done(r.ok ? 'ok' : 'down', r.detail || '');
+    if (r.noMs) d.ms = null;
+    return d;
+  } catch (e) {
+    return done('down', e && e.name === 'TimeoutError' ? 'zaman aşımı (8 sn)' : 'bağlanılamadı');
+  }
+}
+const httpOk = async (url, headers) => {
+  const r = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+  try { await r.arrayBuffer(); } catch (e) { /* gövde önemsiz */ }
+  return { ok: r.ok, detail: r.ok ? 'çalışıyor' : `HTTP ${r.status}` };
+};
+async function runStatus() {
+  const items = await Promise.all([
+    probe('db', 'Sunucu ve veritabanı', async () => { db.prepare('SELECT 1').get(); return { ok: true, detail: 'çalışıyor' }; }),
+    probe('backup', 'Veritabanı yedeği (günlük)', async () => {
+      const b = backupInfo();
+      if (!b.last) return { ok: false, detail: 'henüz yedek yok', noMs: true };
+      const ageH = (Date.now() - b.last.at) / 3600000, when = ageH < 1 ? Math.max(1, Math.round(ageH * 60)) + ' dk' : Math.round(ageH) + ' sa';
+      return { ok: ageH < BACKUP_EVERY_H + 6, detail: `son yedek ${when} önce, ${Math.round(b.last.bytes / 1024)} KB, ${b.count} yedek saklanıyor`, noMs: true };
+    }),
+    probe('local', 'Yerel besin tablosu (yedek)', async () => { const st = localFoods.stats(); return { ok: st.foods > 1000, detail: `${st.foods} besin, ${st.aliases} Türkçe eşleme` }; }),
+    probe('gemini', 'Gemini (yapay zekâ)', async () => !env.GEMINI_API_KEY ? { off: 'anahtar tanımlı değil' }
+      : httpOk(`${GEMINI_BASE}/models?pageSize=1`, { 'x-goog-api-key': env.GEMINI_API_KEY })),
+    probe('openrouter', 'OpenRouter (yedek yapay zekâ)', async () => !env.OPENROUTER_API_KEY ? { off: 'anahtar tanımlı değil' }
+      : httpOk(`${OPENROUTER_BASE}/key`, { Authorization: `Bearer ${env.OPENROUTER_API_KEY}` })),
+    probe('nvidia', 'NVIDIA DeepSeek', async () => !env.NVIDIA_API_KEY ? { off: 'anahtar tanımlı değil' }
+      : httpOk(`${NVIDIA_BASE}/models`, { Authorization: `Bearer ${env.NVIDIA_API_KEY}` })),
+    ...['groq', 'cerebras', 'mistral'].filter(k => env[KEY_ENV[k]]).map(k => probe(k, `${OPENAI_COMPAT[k].name} (yedek yapay zekâ)`,
+      () => httpOk(`${OPENAI_COMPAT[k].base}/models`, { Authorization: `Bearer ${env[KEY_ENV[k]]}` }))),
+    probe('usda', 'USDA (besin veritabanı)', async () => !ref.usdaEnabled() ? { off: 'anahtar tanımlı değil' }
+      : httpOk(`${(env.USDA_BASE || 'https://api.nal.usda.gov/fdc/v1').replace(/\/$/, '')}/foods/search?query=egg&pageSize=1&api_key=${encodeURIComponent(env.USDA_API_KEY)}`, {})),
+    probe('off', 'Open Food Facts (barkod)', async () => httpOk(`${(env.OFF_BASE || 'https://world.openfoodfacts.org').replace(/\/$/, '')}/api/v2/product/5449000000996.json?fields=code`,
+      { 'User-Agent': `SporHocam/1.0 (${env.OFF_CONTACT || 'kisisel-kullanim'})`, Accept: 'application/json' })),
+  ]);
+  const ai = items.filter(i => ['gemini', 'openrouter', 'nvidia', 'groq', 'cerebras', 'mistral'].includes(i.id));
+  const aiOk = ai.some(i => i.state === 'ok');
+  const anyDown = items.some(i => i.state === 'down');
+  return { at: Date.now(), items, summary: !aiOk && ai.some(i => i.state !== 'off') ? 'down' : anyDown ? 'warn' : 'ok' };
+}
+async function handleStatus(req, res) {
+  // yapay zekâ sırası (hangi model hazır / geçici dışlanmış) her istekte taze hesaplanır; dış servis ölçümleri önbellekten gelebilir
+  const seen = new Set(), entries = [];
+  for (const ch of Object.values(CHAINS)) for (const e of ch) if (!seen.has(entryKey(e))) { seen.add(entryKey(e)); entries.push(e); }
+  const chain = chainState(entries);
+  if (statusCache.data && Date.now() - statusCache.at < STATUS_TTL) return send(res, 200, { ...statusCache.data, chain, cached: true });
+  if (!statusRun) statusRun = runStatus().then(d => { statusCache = { at: Date.now(), data: d }; return d; }).finally(() => { statusRun = null; });
+  return send(res, 200, { ...(await statusRun), chain });
+}
+
 async function handleLookup(req, res, user) {
   const body = await readBody(req, 200000);
   const items = Array.isArray(body.items) ? body.items.slice(0, 8) : [];
@@ -540,12 +724,6 @@ async function adminPw(admin, pw, ip) {
   if (!ok) { rlFail(k1, k2); throw new HttpError(403, 'bad_password', 'Yönetici şifresi hatalı.'); }
   rlOk(k1);
 }
-function backupInfo() {
-  try {
-    const stats = fs.readdirSync(BACKUP_DIR).filter(f => /^(start|daily)-.*\.db$/.test(f)).map(f => fs.statSync(path.join(BACKUP_DIR, f)));
-    return { count: stats.length, last: stats.reduce((a, s) => Math.max(a, s.mtimeMs), 0) || null, bytes: stats.reduce((a, s) => a + s.size, 0) };
-  } catch (e) { return { count: 0, last: null, bytes: 0 }; }
-}
 const intIn = (v, min, max, name) => {
   const n = Number(v);
   if (!Number.isInteger(n) || n < min || n > max) throw new HttpError(400, 'bad_request', `${name} ${min}-${max} arasında bir tam sayı olmalı.`);
@@ -568,9 +746,10 @@ async function handleAdmin(req, res, p, m, cu, ip) {
         status: !r.active ? 'iptal' : r.expires && r.expires < now ? 'süresi doldu' : r.max_uses && r.uses >= r.max_uses ? 'doldu' : 'geçerli' })),
       masterInvite: !!env.INVITE_CODE,
       settings: { registration: getSetting('registration'), aiUserLimit: Number(getSetting('ai_user_limit')), aiGlobalLimit: Number(getSetting('ai_global_limit')), maxUsers: Number(getSetting('max_users')), showAccessLog: getSetting('show_access_log') === 'true' },
-      stats: { users: users.length, aiToday: q.usageSum.get(day).n, aiCache: q.cacheCount.get().n, foodCache: q.foodCacheCount.get().n, dbBytes: dbBytes(), backups: backupInfo() },
+      backup: backupInfo(),
+      stats: { users: users.length, aiToday: q.usageSum.get(day).n, aiCache: q.cacheCount.get().n, foodCache: q.foodCacheCount.get().n, dbBytes: dbBytes() },
       system: {
-        chain: CHAINS.default.map(c => c.provider + ':' + c.model), geminiKey: !!env.GEMINI_API_KEY, openrouterKey: !!env.OPENROUTER_API_KEY, usdaKey: ref.usdaEnabled(),
+        chain: CHAINS.default.map(c => c.provider + ':' + c.model), geminiKey: !!env.GEMINI_API_KEY, openrouterKey: !!env.OPENROUTER_API_KEY, nvidiaKey: !!env.NVIDIA_API_KEY, groqKey: !!env.GROQ_API_KEY, cerebrasKey: !!env.CEREBRAS_API_KEY, mistralKey: !!env.MISTRAL_API_KEY, usdaKey: ref.usdaEnabled(),
         registrationEffective: regMode(), tz: TZ,
       },
     });
@@ -597,6 +776,11 @@ async function handleAdmin(req, res, p, m, cu, ip) {
     st.on('error', () => res.destroy());
     st.pipe(res);
     return;
+  }
+
+  if (p === '/api/admin/backup-now' && m === 'POST') {
+    try { const r = runBackup(); return send(res, 200, { ok: true, last: r, count: backupInfo().count }); }
+    catch (e) { throw new HttpError(500, 'backup_failed', 'Yedek alınamadı: ' + e.message); }
   }
 
   if (p === '/api/admin/log' && m === 'GET') {
@@ -888,6 +1072,13 @@ async function handleApi(req, res, url) {
     return send(res, 200, { log: rows });
   }
 
+  if (p === '/api/status' && m === 'GET') return handleStatus(req, res);
+  if (p === '/api/offline-estimate' && m === 'POST') {
+    const b = await readBody(req, 20000);
+    const text = typeof b.text === 'string' ? b.text.slice(0, 2000) : '';
+    if (!text.trim()) throw new HttpError(400, 'bad_request', 'Metin boş.');
+    return send(res, 200, localFoods.estimate(text));
+  }
   if (p === '/api/lookup' && m === 'POST') return handleLookup(req, res, user);
   const bm = p.match(/^\/api\/barcode\/(\d{8,14})$/);
   if (bm && m === 'GET') {
@@ -1046,7 +1237,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.requestTimeout = 150000;
-setInterval(() => backupDb('daily', Number(env.BACKUP_KEEP_DAILY) || 14), 24 * 3600000).unref();
 server.listen(PORT, () => {
   console.log(`Spor Hocam http://0.0.0.0:${PORT} üzerinde çalışıyor. Veri: ${DATA_DIR}`);
   console.log(`Kayıt modu: ${regMode()} | yapay zekâ: ${aiEnabled() ? 'açık' : 'KAPALI (anahtar yok)'} | zincir: ${CHAINS.default.map(c => c.provider + ':' + c.model).join(' → ')}`);
