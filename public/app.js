@@ -940,7 +940,6 @@ function viewToday(){
     </div>`;
   }
   h+=waterCard(d);
-  h+=liftCard(d);
   h+=`<div class="card"><h3>Ne yedin?</h3>
     <p class="mut small" style="margin:4px 0 8px">Doğal yaz: “2 yumurta, 1 dilim tam buğday ekmeği, bir bardak süt”. Gramaj ya da etiket değeri yazarsan aynen kullanırım.</p>
     <textarea data-i="food" placeholder="Yediklerini buraya yaz…">${esc(V.food)}</textarea>
@@ -990,6 +989,7 @@ function viewToday(){
       }).join('')}</div>`;
     });
   }
+  h+=liftCard(d);   // antrenman: yemek bölümünün (Ne yedin? ve Öğünler) altında
   h+=suppCard(d);
   const supTaken=Object.keys(day.sup||{}).length>0;
   if(meals.length||supTaken){
