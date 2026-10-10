@@ -75,6 +75,11 @@ Yemek hesaplaması üç katmanlı çalışır; yapay zekâ değerleri uydurmak y
 
 Sınırlar: USDA'da Türk yemekleri yoktur, onlar yapay zekâ tahmini + senin "Ürünlerim" kayıtlarınla gelir. Open Food Facts topluluk verisidir; eksik ya da hatalı kayıt olabilir, bu yüzden önizlemede "etiketle karşılaştır" uyarısı çıkar. Referanstan gelen kalemlerde kaynakta olmayan vitamin/mineral sayısı gösterilir; o değerler toplamlara dahil edilmez (tahmin yürütülmez). Aramalar sunucuda 30 gün önbelleğe alınır; Open Food Facts'in dakikadaki istek sınırına uyulur.
 
+### Antrenman günlüğü ve güç takibi
+- **Bugün ekranı:** Kart her gün "Bugün antrenman yaptın mı?" diye sorar (🏋 Yaptım / 😴 Dinlenme günü); cevaplanana kadar kart görünür kalır. *Yaptım* deyince hareket seçilir (daha önce girdiklerin + ~40 yaygın hareket önerilir, yenisini de yazabilirsin), her hareket için set satırları girilir: **kg × tekrar**. Önceki antrenmandaki değerler "Geçen sefer" olarak gösterilir, *↺ Kopyala* ile tek dokunuşta doldurulur (kendiliğinden doldurulmaz, yanlış veri girmesin diye). Ağırlıksız hareketlerde kg boş bırakılır.
+- **Analiz → Güç:** Hareket başına tahmini 1RM (Epley: kg × (1 + tekrar/30), 12 tekrarın üstü 12 sayılır; ağırlıksız harekette en iyi set tekrarı), rekor, grafik, son 5 antrenman, son 4 hafta ile önceki 4 haftanın karşılaştırması ve 3 antrenmandır rekor geçilmediğinde durağanlık uyarısı. Yeni rekor kırınca Bugün kartında 🎉 rozeti çıkar. Koç yorumu da antrenman verisini görür.
+- **Veri:** Günün kaydında yeni bir `lift` alanı olarak tutulur; yemek, su, kilo ve takviye alanlarına dokunmaz. Eski sürümden kalan `workouts` ve `programs` alanları kullanılmaz, silinmez. Kullanıcının JSON yedeğine ve veritabanı yedeğine dahildir.
+
 ### Apple Sağlık ile yakılan kalori (iPhone)
 Safari/PWA iPhone'un Sağlık verisini doğrudan okuyamaz; bu yüzden iPhone'un **Kısayollar** uygulaması her gün aktif enerjiyi sunucuya gönderir.
 - **Kullanım:** Bugün ekranındaki **🔄 Sağlık'tan çek** düğmesi (yalnızca iPhone/iPad'de görünür) `shortcuts://run-shortcut?name=Spor%20Hocam%20Saglik` ile iPhone'daki aynı adlı kısayolu çalıştırır. Kısayol Sağlık'tan okuyup aşağıdaki isteği sunucuya gönderir; uygulamaya dönünce değer kendiliğinden güncellenir. Telefon açıkken çalıştığı için kilitli telefon sorunu olmaz.
