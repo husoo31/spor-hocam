@@ -71,7 +71,7 @@ function clean(raw,label){
 const scaleN=(n,k)=>{const o={};Object.keys(n).forEach(key=>{const v=n[key]*k;if(v>0)o[key]=key==='kcal'?r0(v):r2(v)});return o};
 
 /* ---------- durum ---------- */
-const defaultS=()=>({profile:{sex:'m',age:'',height:'',weight:'',act:'1.55',goal:'cut'},goals:{kcal:0,protein:0,carbs:0,fat:0,tdee:0,bmr:0,water:0},supps:[],lib:[],prefs:{precise:true},programs:[],active:null,months:{}});
+const defaultS=()=>({profile:{sex:'m',age:'',height:'',weight:'',act:'1.55',goal:'cut'},goals:{kcal:0,protein:0,carbs:0,fat:0,tdee:0,bmr:0,water:0},supps:[],lib:[],prefs:{precise:true},programs:[],active:null,plan:{days:{}},months:{}});
 let S=defaultS();
 const hr=new Date().getHours();
 let V={sys:{open:false,busy:false,data:null,err:''},tab:'today',date:TODAY,food:'',mealType:hr<11?'Kahvaltı':hr<16?'Öğle':hr<21?'Akşam':'Atıştırmalık',preview:null,pnotes:[],busy:false,busyMsg:'',err:'',edit:null,undo:null,
@@ -125,6 +125,7 @@ function applyData(o){
   S.programs=o.programs||S.programs||[];
   S.active=o.active??S.active;
   if(o.program!==undefined)S.program=o.program;
+  if(o.plan&&o.plan.days&&typeof o.plan.days==='object')S.plan=o.plan; // antrenman programı (eski 'program/programs' alanlarından ayrı)
   if(o.months&&typeof o.months==='object')S.months=o.months;
 }
 async function load(){
@@ -139,6 +140,7 @@ async function load(){
       snap.docs.forEach(doc=>{
         const id=doc.id,data=clone(doc.data()||{});
         if(id==='core')applyData(data);
+        else if(id==='plan'){if(data&&data.days&&typeof data.days==='object')S.plan=data}
         else if(id.startsWith('m-')){
           const [key,part]=id.slice(2).split('.');
           const m=S.months[key]||(S.months[key]={days:{},workouts:{}});
@@ -151,10 +153,11 @@ async function load(){
   }
   if(local&&(!col||dbErr||!dbHas)){
     applyData(local);
-    if(col&&!dbErr){persist('core');Object.keys(S.months).forEach(k=>persist(k))}
+    if(col&&!dbErr){persist('core');Object.keys(S.months).forEach(k=>persist(k));if(Object.keys((S.plan||{}).days||{}).length)persist('plan')}
   }else if(local&&pend.length){
     pend.forEach(k=>{
       if(k==='core')applyData({profile:local.profile,goals:local.goals,supps:local.supps,lib:local.lib,prefs:local.prefs,programs:local.programs,active:local.active});
+      else if(k==='plan'){if(local.plan&&local.plan.days)S.plan=local.plan}
       else if(local.months&&local.months[k])S.months[k]=local.months[k];
       persist(k);
     });
@@ -205,6 +208,7 @@ async function flush(){
   try{
     for(const k of keys){
       if(k==='core')await col.doc('core').set(coreObj());
+      else if(k==='plan')await col.doc('plan').set(S.plan);
       else await writeMonth(k);
     }
     storeDirty();setStatus('saved');
@@ -227,7 +231,7 @@ const mon=d=>{const k=d.slice(0,7);const m=S.months[k]??(S.months[k]={});m.days=
 const getDay=d=>{const m=mon(d);const x=m.days[d]??(m.days[d]={});if(!Array.isArray(x.meals))x.meals=[];return x};
 const getDayRO=d=>(S.months[d.slice(0,7)]?.days||{})[d]||{meals:[]};
 const save=d=>persist(d.slice(0,7));
-const hasData=d=>{const x=getDayRO(d);return (x.meals||[]).length>0||(x.water||[]).length>0||!!x.weight||Object.keys(x.sup||{}).length>0||!!(x.lift&&(x.lift.rest||(x.lift.ex||[]).length))};
+const hasData=d=>{const x=getDayRO(d);return (x.meals||[]).length>0||(x.water||[]).length>0||!!x.weight||Object.keys(x.sup||{}).length>0||liftHas(x.lift)};
 
 /* günlük toplamlar: yiyecek + takviye */
 function suppTotals(d){
@@ -797,16 +801,39 @@ function liftHistory(){ // { 'squat': { name, s:[{d, sets:[{w,r}]}] (tarihe gör
   return m;
 }
 const exUnit=h=>h.s.some(q=>q.sets.some(x=>x.w>0))?'kg':'tekrar';
+const planDays=()=>{if(!S.plan||typeof S.plan!=='object'||!S.plan.days)S.plan={days:{}};return S.plan.days};
 function liftSumTxt(d){
   const L=liftOf(d);let vol=0,nset=0;
   ((L&&L.ex)||[]).forEach(e=>(e.s||[]).forEach(x=>{if(num(x.r)>0){nset++;vol+=num(x.w)*num(x.r)}}));
   return nset?`${nset} set · ${r0(vol).toLocaleString('tr-TR')} kg hacim`:'';
 }
+/* ---------- antrenman programı: haftanın her günü için dinlenme ya da hareket listesi (set sayısıyla) ----------
+   Ayrı bir 'plan' kaydında tutulur: S.plan = { since:'YYYY-MM-DD', days:{ 0..6 (0=Pazar): { t:'train'|'rest', name, ex:[{n, s}] } } } */
+const WD_ORDER=[1,2,3,4,5,6,0];
+const WD_NAME=['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
+const planActive=()=>Object.values((S.plan&&S.plan.days)||{}).some(x=>x&&x.t==='train'&&(x.ex||[]).length>0);
+const planDay=d=>(S.plan&&S.plan.days&&S.plan.days[parseD(d).getDay()])||null;
+// 'train' | 'rest' | null (program yok ya da program öncesi bir gün: her gün sorulur)
+function planKind(d){
+  if(!planActive()||d<(S.plan.since||'0000-00-00'))return null;
+  const p=planDay(d);return p&&p.t==='train'&&(p.ex||[]).length?'train':'rest';
+}
+const planExercises=d=>{const p=planDay(d);return p&&p.t==='train'?(p.ex||[]).map(e=>({n:e.n,s:Array.from({length:Math.max(1,Math.min(10,Math.round(+e.s)||3))},()=>({w:'',r:''}))})):[]};
+const liftHas=L=>!!L&&!!(L.rest||L.skip||(L.ex||[]).some(e=>(e.s||[]).some(x=>num(x.r)>0)));
 function liftCard(d){
-  const L=liftOf(d),who=d===TODAY?'Bugün':dlabel(d);
+  const who=d===TODAY?'Bugün':dlabel(d),kind=planKind(d),pd=planDay(d);
+  let L=liftOf(d);
+  // programdaki antrenman günü: hareketleri uygulama kendisi yazar, sen yalnızca kilo ve tekrar girersin
+  if(kind==='train'&&!L&&d===TODAY){getDay(d).lift={ex:planExercises(d)};L=liftOf(d)}
+  if(kind==='train'&&!L)return `<div class="card"><h3>🏋 ${esc(who)} antrenman${pd.name?' · '+esc(pd.name):''}</h3>
+    <p class="mut small" style="margin:6px 0 0">Programa göre: ${pd.ex.map(e=>esc(e.n)).join(', ')}</p>
+    <div class="row" style="gap:10px;margin-top:10px"><button class="btn" style="flex:1" data-a="liftplan">🏋 Setleri gir</button><button class="btn alt" style="flex:1" data-a="liftskip">⏭ Yapmadım</button></div></div>`;
+  if(kind==='rest'&&(!L||L.rest))return `<div class="card"><div class="row between"><h3>😴 Dinlenme günü</h3><button class="chip" style="margin:0" data-a="liftyes">Yine de antrenman gir</button></div>
+    <p class="mut small" style="margin:6px 0 0">Programına göre ${d===TODAY?'bugün':'bu gün'} dinlenme; soru sormuyorum.</p></div>`;
   if(!L)return `<div class="card"><h3>${esc(who)} antrenman yaptın mı?</h3>
     <div class="row" style="gap:10px;margin-top:10px"><button class="btn" style="flex:1" data-a="liftyes">🏋 Yaptım</button><button class="btn alt" style="flex:1" data-a="liftrest">😴 Dinlenme günü</button></div></div>`;
   if(L.rest)return `<div class="card"><div class="row between"><h3>😴 Dinlenme günü</h3><button class="chip" style="margin:0" data-a="liftreset">Değiştir</button></div></div>`;
+  if(L.skip)return `<div class="card"><div class="row between"><h3>⏭ Bu günün antrenmanı atlandı</h3><button class="chip" style="margin:0" data-a="liftreset">Değiştir</button></div></div>`;
   const H=liftHistory(),ex=L.ex||[];
   const mine=new Set(Object.keys(H));
   const opts=[...Object.values(H).map(h=>h.name),...LIFT_COMMON.filter(n=>!mine.has(normEx(n)))];
@@ -825,11 +852,11 @@ function liftCard(d){
         <button class="ghost" data-a="setdel" data-e="${i}" data-j="${j}" aria-label="${j+1}. seti sil">✕</button></div>`).join('')}
       <button class="chip" style="margin:8px 0 0" data-a="setadd" data-e="${i}">＋ Set</button></div>`;
   }).join('');
-  return `<div class="card"><div class="row between"><h3>🏋 ${esc(who)} antrenman</h3><span class="mut small num" id="liftsum">${liftSumTxt(d)}</span></div>
+  return `<div class="card"><div class="row between"><h3>🏋 ${esc(who)} antrenman${kind==='train'&&pd&&pd.name?' · '+esc(pd.name):''}</h3><span class="mut small num" id="liftsum">${liftSumTxt(d)}</span></div>
     ${blocks||'<p class="mut small" style="margin:8px 0 0">Bir hareket ekleyerek başla.</p>'}
     <datalist id="exlist">${opts.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
     <div class="row" style="margin-top:14px"><input id="exnew" data-i="exnew" list="exlist" placeholder="Hareket ekle (örn. Squat)" aria-label="Hareket adı" autocomplete="off" maxlength="40"><button class="btn sm" style="min-width:70px" data-a="exadd">Ekle</button></div>
-    <button class="chip" style="margin:12px 0 0" data-a="liftreset">Bu günün antrenmanını sıfırla</button></div>`;
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px"><button class="chip" style="margin:0" data-a="liftreset">Bu günün antrenmanını sıfırla</button>${kind==='train'?`<button class="chip" style="margin:0" data-a="liftskip">⏭ ${d===TODAY?'Bugün':'Bu gün'} yapmadım</button>`:''}</div></div>`;
 }
 function suppCard(d){
   const day=getDayRO(d),sup=day.sup||{};
@@ -1022,7 +1049,7 @@ function viewHistory(){
   else{
     h+=`<div class="card" style="padding:4px 14px">${shown.map(d=>{
       const t=totals(d),x=getDayRO(d),w=waterSum(d),sup=Object.keys(x.sup||{}).length;
-      return `<div class="hrow" data-a="open" data-d="${d}" role="button" tabindex="0"><div style="min-width:74px"><b>${dmid(d)}</b></div><div class="grow"><div class="num"><b>${r0(t.kcal)}</b> kcal · P ${r0(t.protein)}g · K ${r0(t.carbs)}g · Y ${r0(t.fat)}g</div><div class="mut small">${w?`💧 ${(w/1000).toFixed(1).replace('.',',')} L`:''}${sup?` · 💊 ${sup} takviye`:''}${x.weight?` · ⚖ ${f1(x.weight)} kg`:''}${x.lift&&x.lift.rest?' · 😴 dinlenme':x.lift&&(x.lift.ex||[]).length?` · 🏋 ${x.lift.ex.length} hareket`:''}</div></div><span class="mut">›</span></div>`;
+      return `<div class="hrow" data-a="open" data-d="${d}" role="button" tabindex="0"><div style="min-width:74px"><b>${dmid(d)}</b></div><div class="grow"><div class="num"><b>${r0(t.kcal)}</b> kcal · P ${r0(t.protein)}g · K ${r0(t.carbs)}g · Y ${r0(t.fat)}g</div><div class="mut small">${w?`💧 ${(w/1000).toFixed(1).replace('.',',')} L`:''}${sup?` · 💊 ${sup} takviye`:''}${x.weight?` · ⚖ ${f1(x.weight)} kg`:''}${x.lift&&x.lift.rest?' · 😴 dinlenme':x.lift&&x.lift.skip?' · ⏭ atlandı':liftHas(x.lift)?` · 🏋 ${x.lift.ex.filter(e=>(e.s||[]).some(s=>num(s.r)>0)).length} hareket`:''}</div></div><span class="mut">›</span></div>`;
     }).join('')}</div>`;
     if(all.length>shown.length)h+=`<button class="btn alt full" data-a="hmore">Tümünü göster (${all.length})</button>`;
   }
@@ -1063,35 +1090,125 @@ function trend(pts){
   const sl=nu/de;return {perDay:sl,perWeek:sl*7};
 }
 function weightPts(n){const a=[];for(let i=n-1;i>=0;i--){const d=addDays(TODAY,-i),w=num(getDayRO(d).weight);if(w)a.push({d,v:w})}return a}
-/* ---------- Güç takibi (Analiz sekmesi) ---------- */
+/* ---------- Güç takibi ve program analizi (Analiz sekmesi) ---------- */
+const liftWin=(x,a,b)=>{const v=x.s.filter(q=>q.d>addDays(TODAY,-a)&&q.d<=addDays(TODAY,-b)).map(q=>bestOf(q.sets));return v.length?Math.max(...v):0};
+function liftRows(H){ // her hareket için: son 28 gün (cur), önceki 28 gün (prv), değişim %, rekor, durağanlık
+  return Object.entries(H).map(([k,x])=>{
+    const cur=liftWin(x,28,0),prv=liftWin(x,56,28),pts=x.s.map(q=>bestOf(q.sets)),all=Math.max(...pts);
+    let plateau=false;
+    if(pts.length>=4){const l3=Math.max(...pts.slice(-3)),bf=Math.max(...pts.slice(0,-3));plateau=l3<=bf}
+    return {k,x,name:x.name,unit:exUnit(x),cur,prv,ch:cur&&prv?(cur-prv)/prv*100:null,all,n:x.s.length,
+      lastD:x.s[x.s.length-1].d,prDay:x.s.find(q=>bestOf(q.sets)===all).d,plateau};
+  }).filter(r=>r.lastD>=addDays(TODAY,-180));
+}
+function planAdherence(){ // son 4 hafta (7'şer günlük pencereler, bugünden geriye), güncel programa göre
+  if(!planActive())return null;
+  const out=[];
+  for(let w=0;w<4;w++){
+    let planned=0,done=0,skipped=0,missed=0,extra=0;
+    for(let i=0;i<7;i++){
+      const d=addDays(TODAY,-(w*7+i)),kind=planKind(d),L=liftOf(d);
+      if(kind==='train'){
+        if(L&&L.skip){planned++;skipped++}
+        else if(L&&!L.rest&&liftHas(L)){planned++;done++}
+        else if(d!==TODAY){planned++;missed++}      // bugün henüz girilmediyse "kaçırıldı" sayma
+      }else if(kind==='rest'&&L&&!L.rest&&!L.skip&&liftHas(L))extra++;
+    }
+    out.push({w,planned,done,skipped,missed,extra});
+  }
+  return out;
+}
+function weeklyVolume(n){ // son n hafta (7'şer gün) toplam hacim kg
+  const out=[];
+  for(let w=n-1;w>=0;w--){
+    let v=0;for(let i=0;i<7;i++){const L=liftOf(addDays(TODAY,-(w*7+i)));((L&&L.ex)||[]).forEach(e=>(e.s||[]).forEach(s=>{if(num(s.r)>0&&num(s.w)>0)v+=num(s.w)*num(s.r)}))}
+    out.push({d:addDays(TODAY,-(w*7+6)),v:r0(v)});
+  }
+  return out;
+}
+function nextHint(r){
+  const last=r.x.s[r.x.s.length-1],top=last.sets.slice().sort((a,b)=>setScore(b)-setScore(a))[0];
+  if(r.unit==='kg'&&top.w>0){
+    if(top.r>=10)return `Son antrenmanda ${f1(top.w)} kg × ${r0(top.r)} yaptın; üst tekrar aralığına ulaştın. Sonraki antrenmanda <b>${f1(top.w+2.5)} kg</b> dene (tekrar 6-8'e düşebilir, normaldir).`;
+    return `Son antrenmanda en iyi set ${f1(top.w)} kg × ${r0(top.r)}. Aynı kiloda önce <b>${r0(top.r)+1} tekrar</b> hedefle; 10 tekrara ulaşınca kiloyu 2,5 kg artır.`;
+  }
+  return `Son antrenmanda en iyi set ${r0(top.r)} tekrar. Sonraki hedefin <b>${r0(top.r)+1} tekrar</b>.`;
+}
 function viewLifts(){
-  const H=liftHistory(),since=addDays(TODAY,-180);
+  const H=liftHistory(),rows=liftRows(H);
   let h=`<h2>Güç</h2>`;
-  let train=0,rest=0;for(let i=0;i<7;i++){const L=liftOf(addDays(TODAY,-i));if(L&&L.rest)rest++;else if(L&&(L.ex||[]).length)train++}
-  const list=Object.entries(H).filter(([,x])=>x.s.some(q=>q.d>=since)).sort((a,b)=>b[1].s.length-a[1].s.length).slice(0,10);
-  if(!list.length)return h+`<div class="card"><p class="mut small" style="margin:0">Henüz antrenman kaydı yok. Bugün ekranındaki antrenman kartından hareket, set, kilo ve tekrar girdikçe güç gelişimin burada görünür.</p></div>`;
-  const key=list.some(([k])=>k===V.liftSel)?V.liftSel:list[0][0],x=H[key],unit=exUnit(x);
-  const pts=x.s.map(q=>({d:q.d,v:r1(bestOf(q.sets))}));
-  const all=Math.max(...pts.map(p=>p.v)),last=pts[pts.length-1];
-  const win=(a,b)=>{const v=x.s.filter(q=>q.d>addDays(TODAY,-a)&&q.d<=addDays(TODAY,-b)).map(q=>bestOf(q.sets));return v.length?Math.max(...v):0};
-  const cur=win(28,0),prv=win(56,28);
+  if(!rows.length)return h+`<div class="card"><p class="mut small" style="margin:0">Henüz antrenman kaydı yok. Bugün ekranındaki antrenman kartından hareket, set, kilo ve tekrar girdikçe güç gelişimin ve program uyumun burada görünür.</p></div>`;
+
+  /* 1) Program uyumu */
+  const ad=planAdherence();
+  if(ad){
+    const P=ad.reduce((a,x)=>a+x.planned,0),D=ad.reduce((a,x)=>a+x.done,0),Sk=ad.reduce((a,x)=>a+x.skipped,0),M=ad.reduce((a,x)=>a+x.missed,0),E=ad.reduce((a,x)=>a+x.extra,0);
+    const pct=P?r0(D/P*100):0;
+    h+=`<div class="card"><h3>Program uyumu</h3><div class="mut small">Son 4 hafta, güncel programına göre</div>
+      <div class="num" style="font-size:30px;font-weight:700;margin-top:4px">${D}<span class="mut small"> / ${P} antrenman</span> <span style="font-size:18px">%${pct}</span></div>
+      ${bar(pct,pct>=80?'var(--fat)':pct>=50?'var(--carb)':'var(--bad)')}
+      <div class="mut small" style="margin-top:6px">${Sk?`${Sk} atladın`:'atlama yok'} · ${M?`${M} gün boş bıraktın`:'boş gün yok'}${E?` · ${E} ekstra antrenman`:''}</div>
+      ${ad.map(x=>`<div style="margin-top:8px"><div class="row between small"><span>${x.w===0?'Son 7 gün':x.w+' hafta önce'}</span><span class="num"><b>${x.done}</b> / ${x.planned}</span></div>${bar(x.planned?x.done/x.planned*100:0,'var(--kcal)')}</div>`).join('')}
+      <div class="small" style="margin-top:10px">${pct>=80?'💪 Programa çok iyi uyuyorsun; gelişim için en önemli şey bu.':pct>=50?'👍 Programın yarısından fazlasını uyguluyorsun; düzenli gitmek gelişimi hızlandırır.':P?'⚠ Antrenmanların çoğu yapılmamış görünüyor; programı gerçekçi bir güne/hareket sayısına indirmeyi düşün.':'Henüz değerlendirilecek antrenman günü yok.'}</div></div>`;
+  }else{
+    let train=0,rest=0;for(let i=0;i<7;i++){const L=liftOf(addDays(TODAY,-i));if(L&&L.rest)rest++;else if(liftHas(L)&&!L.skip)train++}
+    h+=`<div class="card"><div class="mut small">Son 7 gün</div><div class="num" style="font-size:24px;font-weight:700">${train}<span class="mut small"> antrenman</span>${rest?` · ${rest}<span class="mut small"> dinlenme</span>`:''}</div>
+      <p class="note" style="margin-top:6px">Ayarlar → Program'dan haftalık programını girersen program uyumunu da burada görürsün.</p></div>`;
+  }
+
+  /* 2) Genel değerlendirme */
+  const cmp=rows.filter(r=>r.ch!==null),up=cmp.filter(r=>r.ch>=2),dn=cmp.filter(r=>r.ch<=-2),fl=cmp.filter(r=>r.ch>-2&&r.ch<2);
+  let overall;
+  if(!cmp.length)overall='Karşılaştırma için bir hareketin hem son 4 haftada hem önceki 4 haftada kaydı olmalı. Birkaç hafta düzenli girdikçe burada genel değerlendirme çıkar.';
+  else{
+    const avg=cmp.reduce((a,r)=>a+r.ch,0)/cmp.length;
+    overall=`${avg>=2?'💪':avg<=-2?'📉':'➖'} Karşılaştırılabilen ${cmp.length} hareketten <b>${up.length}</b> tanesinde güçlendin, <b>${fl.length}</b> tanesi aynı, <b>${dn.length}</b> tanesinde gerilediğin görülüyor. Ortalama değişim <b>%${r1(avg)}</b>.`;
+    if(up.length)overall+=`<br>En çok ilerleyen: <b>${esc(up.slice().sort((a,b)=>b.ch-a.ch)[0].name)}</b> (%${r1(up.slice().sort((a,b)=>b.ch-a.ch)[0].ch)}).`;
+    if(dn.length)overall+=`<br>Dikkat: <b>${esc(dn.slice().sort((a,b)=>a.ch-b.ch)[0].name)}</b> geriledi (%${r1(dn.slice().sort((a,b)=>a.ch-b.ch)[0].ch)}); uyku, dinlenme ve kalori yeterliliğine bak.`;
+    const tr=trend(weightPts(28));
+    if(S.profile.goal==='cut'&&tr&&tr.perWeek<-0.1&&avg>=-2)overall+=`<br>🔥 Kalori açığında (kilo ${String(r1(tr.perWeek)).replace('.',',')} kg/hafta) gücünü koruyor ya da artırıyorsun; bu, yağ yakarken kas korumanın iyi bir işareti.`;
+    if(S.profile.goal==='cut'&&tr&&tr.perWeek<-0.1&&avg<-2)overall+=`<br>⚠ Kilo verirken güç düşüyor; açık fazla agresif olabilir. Protein hedefine ve uykuya bak.`;
+  }
+  h+=`<div class="card"><h3>Genel değerlendirme</h3><div class="small" style="margin-top:6px;line-height:1.6">${overall}</div></div>`;
+
+  /* 3) Haftalık hacim */
+  const wv=weeklyVolume(8);
+  if(wv.some(x=>x.v>0)){
+    const last=wv[wv.length-1].v,prev=wv[wv.length-2].v;
+    h+=`<div class="card"><h3>Haftalık hacim (kg × tekrar)</h3>${barChart(wv.map(x=>x.v),wv.map(x=>dshort(x.d)),0,'var(--carb)')}
+      <div class="mut small">Son 7 gün: <b class="num" style="color:var(--ink)">${last.toLocaleString('tr-TR')} kg</b>${prev?` · önceki hafta ${prev.toLocaleString('tr-TR')} kg (${last>=prev?'+':''}%${r0((last-prev)/prev*100)})`:''}</div></div>`;
+  }
+
+  /* 4) Tüm hareketler */
+  const sorted=rows.slice().sort((a,b)=>(b.ch===null?-999:b.ch)-(a.ch===null?-999:a.ch));
+  const key=rows.some(r=>r.k===V.liftSel)?V.liftSel:sorted[0].k;
+  h+=`<div class="card"><h3>Tüm hareketler</h3><div class="mut small" style="margin-bottom:4px">Son 4 hafta, önceki 4 haftaya göre (tahmini 1RM; ağırlıksız harekette en iyi set tekrarı). Ayrıntı için dokun.</div>
+    ${sorted.map(r=>`<div class="hrow" data-a="liftsel" data-k="${esc(r.k)}" role="button" tabindex="0" style="${r.k===key?'background:rgba(127,127,127,.12);border-radius:10px':''}">
+      <div class="grow"><b>${esc(r.name)}</b><div class="mut small">${r.n} antrenman${r.plateau?' · ⏸ durağan':''}</div></div>
+      <div style="text-align:right"><div class="num"><b>${f1(r.cur||r.all)}</b><span class="mut small"> ${r.unit}</span></div>
+      <div class="small" style="color:${r.ch===null?'var(--mut)':r.ch>=2?'var(--fat)':r.ch<=-2?'var(--bad)':'var(--mut)'}">${r.ch===null?'karşılaştırma yok':(r.ch>=2?'📈 +':r.ch<=-2?'📉 ':'➖ ')+'%'+r1(r.ch)}</div></div></div>`).join('')}</div>`;
+
+  /* 5) Seçili hareketin ayrıntısı */
+  const r=rows.find(x=>x.k===key),x=r.x,pts=x.s.map(q=>({d:q.d,v:r1(bestOf(q.sets))})),last=pts[pts.length-1];
   let verdict;
-  if(cur&&prv){const ch=(cur-prv)/prv*100;verdict=ch>=2?`💪 Son 4 haftada <b>%${r1(ch)} güçlendin</b> (önceki 4 hafta: ${f1(prv)} ${unit}).`:ch<=-2?`📉 Son 4 haftada <b>%${r1(-ch)} geriledin</b> (önceki 4 hafta: ${f1(prv)} ${unit}). Dinlenme ve uyku yeterli mi?`:`➖ Son 4 haftada aynı seviyedesin (±%2).`}
-  else if(cur)verdict='Karşılaştırma için önceki 4 haftada bu harekete ait kayıt yok.';
-  else verdict='Son 4 haftada bu harekete ait kayıt yok.';
+  if(r.ch!==null)verdict=r.ch>=2?`💪 Son 4 haftada <b>%${r1(r.ch)} güçlendin</b> (önceki 4 hafta: ${f1(r.prv)} ${r.unit}).`:r.ch<=-2?`📉 Son 4 haftada <b>%${r1(-r.ch)} geriledin</b> (önceki 4 hafta: ${f1(r.prv)} ${r.unit}). Dinlenme ve uyku yeterli mi?`:`➖ Son 4 haftada aynı seviyedesin (±%2).`;
+  else verdict=r.cur?'Karşılaştırma için önceki 4 haftada bu harekete ait kayıt yok.':'Son 4 haftada bu harekete ait kayıt yok.';
   let plateau='';
-  if(pts.length>=4){const l3=Math.max(...pts.slice(-3).map(p=>p.v)),bf=Math.max(...pts.slice(0,-3).map(p=>p.v));if(l3<=bf)plateau=`<div class="small" style="margin-top:8px">⏸ Son 3 antrenmanda rekorun (${f1(bf)} ${unit}) geçilmedi. Kilo ya da tekrarı artırmayı dene.</div>`}
-  const title=unit==='kg'?'Tahmini 1RM (en iyi set)':'En iyi set (tekrar)';
-  h+=`<div class="card"><div class="mut small">Son 7 gün</div><div class="num" style="font-size:24px;font-weight:700">${train}<span class="mut small"> antrenman</span>${rest?` · ${rest}<span class="mut small"> dinlenme</span>`:''}</div></div>
-  <div class="card"><div class="seg" style="flex-wrap:wrap;margin-bottom:10px">${list.map(([k,v])=>`<button data-a="liftsel" data-k="${esc(k)}" class="${k===key?'on':''}">${esc(v.name)}</button>`).join('')}</div>
-    <h3>${esc(x.name)}</h3><div class="mut small">${title}</div>
-    <div class="grid2" style="margin-top:6px"><div><div class="mut small">Son antrenman</div><div class="num" style="font-size:26px;font-weight:700">${f1(last.v)}<span class="mut small"> ${unit}</span></div></div>
-    <div><div class="mut small">Rekor</div><div class="num" style="font-size:26px;font-weight:700">${f1(all)}<span class="mut small"> ${unit}</span></div></div></div>
-    ${lineChart(pts.slice(-30),'var(--carb)',unit)}
+  if(r.plateau){const bf=Math.max(...pts.slice(0,-3).map(p=>p.v));plateau=`<div class="small" style="margin-top:8px">⏸ Son 3 antrenmanda rekorun (${f1(bf)} ${r.unit}) geçilmedi. Kilo ya da tekrarı artırmayı, setlerarası dinlenmeyi ve uykuyu gözden geçir.</div>`}
+  h+=`<div class="card" id="liftdetail"><h3>${esc(r.name)}</h3><div class="mut small">${r.unit==='kg'?'Tahmini 1RM (en iyi set)':'En iyi set (tekrar)'}</div>
+    <div class="grid2" style="margin-top:6px"><div><div class="mut small">Son antrenman</div><div class="num" style="font-size:26px;font-weight:700">${f1(last.v)}<span class="mut small"> ${r.unit}</span></div></div>
+    <div><div class="mut small">Rekor · ${esc(dmid(r.prDay))}</div><div class="num" style="font-size:26px;font-weight:700">${f1(r.all)}<span class="mut small"> ${r.unit}</span></div></div></div>
+    ${lineChart(pts.slice(-30),'var(--carb)',r.unit)}
     <div style="margin-top:8px">${verdict}</div>${plateau}
+    <div class="small" style="margin-top:8px">🎯 ${nextHint(r)}</div>
     <div class="small mut" style="margin:12px 0 4px">Son antrenmanlar</div>
     ${x.s.slice(-5).reverse().map(q=>`<div class="meal"><div style="min-width:74px"><b>${esc(dmid(q.d))}</b></div><div class="grow num small">${q.sets.map(setTxt).join(' · ')}</div></div>`).join('')}
-    ${unit==='kg'?'<p class="note">Tahmini 1RM, Epley formülüyle (kg × (1 + tekrar/30)) hesaplanır; farklı kilo/tekrar kombinasyonlarını karşılaştırılabilir kılar. 12 tekrarın üstü 12 sayılır.</p>':''}</div>`;
+    ${r.unit==='kg'?'<p class="note">Tahmini 1RM, Epley formülüyle (kg × (1 + tekrar/30)) hesaplanır; farklı kilo/tekrar kombinasyonlarını karşılaştırılabilir kılar. 12 tekrarın üstü 12 sayılır.</p>':''}</div>`;
+
+  /* 6) Yapay zekâ ile ayrıntılı yorum */
+  h+=`<div class="card"><h3>Ayrıntılı yorum (yapay zekâ)</h3><p class="mut small" style="margin:4px 0 10px">Programını, uyumunu, hareketlerindeki gelişimi ve haftalık hacmini birlikte yorumlayıp somut öneriler verir.</p>
+    <button class="btn full" data-a="liftcoach" ${V.liftCoachBusy?'disabled':''}>${V.liftCoachBusy?'Analiz ediyorum…':'Antrenmanımı yorumla'}</button>
+    ${V.liftCoach?`<div class="coach" style="margin-top:12px">${esc(V.liftCoach)}</div>`:''}</div>`;
   return h;
 }
 function statsSnapshot(){
@@ -1300,10 +1417,35 @@ function setHealth(){
     <p class="small mut" style="margin:10px 0 0"><b>Not:</b> Düğme yalnızca iPhone/iPad'de görünür. Safari'de açtıysan iş bitince kendiliğinden geri döner; ana ekrana eklenmiş uygulamada Kısayollar'dan elle geri dönmen gerekebilir. Kısayolu istersen her gece otomatik de çalıştırabilirsin (Kısayollar → Otomasyon → Günün Saati), ama iPhone kilitliyken Sağlık verisi okunamaz; o durumda sunucu gelen 0'ı yok sayar. Apple Sağlık bağlıyken yakılan kalori elle girilemez, yalnızca Sağlık'tan gelir. Elle girmek istersen yukarıdan <b>Bağlantıyı kapat</b>'a bas (kayıtların silinmez).</p></div>`;
   return h;
 }
+function setPlan(){
+  const P=(S.plan&&S.plan.days)||{};
+  const mine=new Set(Object.keys(liftHistory()));
+  const opts=[...Object.values(liftHistory()).map(h=>h.name),...LIFT_COMMON.filter(n=>!mine.has(normEx(n)))];
+  let h=`<div class="card"><h3>Haftalık antrenman programın</h3>
+    <p class="small mut" style="margin:6px 0 0">Her gün için <b>dinlenme</b> ya da <b>antrenman</b> seç; antrenman günlerine hareketleri ve set sayısını yaz. Uygulama o gün hareketleri kendisi ekler, sen yalnızca <b>kilo ve tekrar</b> girersin. Dinlenme günlerinde antrenman sormaz. Hiç antrenman günü seçmezsen her gün "antrenman yaptın mı?" diye sorar.</p>
+    ${planActive()?`<p class="small" style="margin:8px 0 0">✅ Program aktif${S.plan.since?` (${esc(dmid(S.plan.since))} tarihinden beri)`:''}. Analiz sekmesindeki <b>Güç</b> bölümü programa uyumunu ve gelişimini gösterir.</p>`:''}</div>
+    <datalist id="explan">${opts.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>`;
+  WD_ORDER.forEach(w=>{
+    const p=P[w]||{t:'rest',ex:[]},train=p.t==='train';
+    h+=`<div class="card"><div class="row between"><h3>${WD_NAME[w]}</h3>
+      <div class="seg" style="margin:0;min-width:210px"><button data-a="pkind" data-w="${w}" data-t="rest" class="${train?'':'on'}">😴 Dinlenme</button><button data-a="pkind" data-w="${w}" data-t="train" class="${train?'on':''}">🏋 Antrenman</button></div></div>`;
+    if(train){
+      h+=`<div style="margin-top:10px"><label for="pn${w}">Antrenman adı (isteğe bağlı)</label><input id="pn${w}" data-i="pname" data-w="${w}" value="${esc(p.name||'')}" placeholder="örn. Push, Bacak, Üst vücut" maxlength="40" autocomplete="off"></div>`;
+      h+=(p.ex||[]).map((e,x)=>`<div class="row" style="gap:6px;margin-top:8px">
+        <input data-i="pex" data-w="${w}" data-x="${x}" value="${esc(e.n)}" aria-label="Hareket adı" maxlength="40" autocomplete="off">
+        <input inputmode="numeric" data-i="pset" data-w="${w}" data-x="${x}" value="${esc(e.s||3)}" aria-label="Set sayısı" style="max-width:64px;text-align:center"><span class="mut small">set</span>
+        ${x>0?`<button class="ghost" data-a="pup" data-w="${w}" data-x="${x}" aria-label="Yukarı taşı">↑</button>`:'<span style="width:34px;flex:none"></span>'}
+        <button class="ghost" data-a="pdel" data-w="${w}" data-x="${x}" aria-label="Hareketi sil">✕</button></div>`).join('');
+      h+=`<div class="row" style="margin-top:10px"><input id="pnew${w}" data-i="pnew" data-w="${w}" list="explan" placeholder="Hareket ekle" aria-label="Hareket adı" autocomplete="off" maxlength="40"><button class="btn sm" style="min-width:70px" data-a="padd" data-w="${w}">Ekle</button></div>`;
+    }else h+=`<p class="small mut" style="margin:8px 0 0">Bu gün dinlenme.</p>`;
+    h+=`</div>`;
+  });
+  return h;
+}
 function viewSettings(){
-  const tabs=[['account','Hesap'],['profile','Profil'],['health','Sağlık'],['prefs','Tercihler'],['data','Veri']];
+  const tabs=[['account','Hesap'],['profile','Profil'],['plan','Program'],['health','Sağlık'],['prefs','Tercihler'],['data','Veri']];
   if(AUTH.cur&&AUTH.cur.isAdmin)tabs.push(['admin','Yönetim']);
-  const body=V.st==='account'?setAccount():V.st==='prefs'?setPrefs():V.st==='data'?setData():V.st==='health'?setHealth():V.st==='admin'?viewAdmin():setProfile();
+  const body=V.st==='account'?setAccount():V.st==='prefs'?setPrefs():V.st==='data'?setData():V.st==='health'?setHealth():V.st==='plan'?setPlan():V.st==='admin'?viewAdmin():setProfile();
   return `<h2 style="margin-top:6px">Ayarlar</h2><div class="seg" style="margin-bottom:12px">${tabs.map(([k,l])=>`<button data-a="sub" data-s="${k}" class="${V.st===k?'on':''}">${l}</button>`).join('')}</div>${body}`;
 }
 
@@ -1694,7 +1836,46 @@ const A={
     if(!prev)return;
     e.s=prev.sets.map(x=>({w:x.w||'',r:x.r}));save(V.date);render();
   },
-  liftsel(ds){V.liftSel=ds.k;render()},
+  liftsel(ds){V.liftSel=ds.k;render();const el=document.getElementById('liftdetail');if(el)el.scrollIntoView({block:'start'})},
+  async liftcoach(){
+    if(V.liftCoachBusy)return;V.liftCoachBusy=true;V.liftCoach='';render();
+    try{
+      const H=liftHistory(),rows=liftRows(H).slice(0,15),ad=planAdherence(),tr=trend(weightPts(28));
+      const data={hedef:S.profile.goal,kilo_kg:num(S.profile.weight)||null,kilo_trendi_kg_hafta:tr?r1(tr.perWeek):null,
+        program:planActive()?WD_ORDER.map(w=>{const p=(S.plan.days||{})[w];return p&&p.t==='train'?{gun:WD_NAME[w],tur:'antrenman',ad:p.name||'',hareketler:(p.ex||[]).map(e=>e.n+' '+e.s+' set')}:{gun:WD_NAME[w],tur:'dinlenme'}}):'program girilmemiş',
+        program_uyumu_son4hafta:ad?ad.map(x=>({hafta_once:x.w,planli:x.planned,yapilan:x.done,atlanan:x.skipped,bos:x.missed,ekstra:x.extra})):null,
+        haftalik_hacim_kg_eskiden_yeniye:weeklyVolume(8).map(x=>x.v),
+        hareketler:rows.map(r=>({ad:r.name,birim:r.unit,son28gun_en_iyi:r1(r.cur),onceki28gun_en_iyi:r1(r.prv),degisim_yuzde:r.ch===null?null:r1(r.ch),rekor:r1(r.all),rekor_tarihi:r.prDay,antrenman_sayisi:r.n,duragan:r.plateau,son_5:r.x.s.slice(-5).map(q=>q.d+': '+q.sets.map(setTxt).join(' '))}))};
+      V.liftCoach=await ask(`Sen deneyimli ve dürüst bir kuvvet antrenörüsün. Aşağıdaki antrenman verilerini analiz et ve Türkçe yaz.\n\nVeri (JSON; birim "kg" ise değerler tahmini 1RM kg cinsindendir, Epley formülü; "tekrar" ise ağırlıksız harekette en iyi set tekrarıdır; haftalık hacim = kg × tekrar toplamı): ${JSON.stringify(data)}\n\nŞu başlıklarla yaz (başlıkları BÜYÜK HARFLE yaz): GENEL DURUM (güçleniyor mu, gerileyen ya da durağan hareket var mı), HAREKET HAREKET (en önemli 3-5 hareketin gelişimi ve somut sayılar), PROGRAM UYUMU (program varsa uyum ve neden önemli; yoksa program girmeyi öner), DURAĞANLIK VE RİSKLER (durağan hareketler için olası nedenler: hacim, dinlenme, kalori/protein, uyku), SONRAKİ 2 HAFTA İÇİN 4 NET ADIM. Veri azsa ya da karşılaştırma için yetersizse bunu açıkça söyle, uydurma; sayılara dayan. Markdown işaretleri kullanma, düz metin olsun, en fazla 350 kelime. Tıbbi teşhis koyma; ağrı ya da sakatlık belirtisi görürsen uzmana danışmasını söyle.`,{modelTier:'complex',cache:false},false);
+    }catch(e){V.liftCoach=errMsg(e)}
+    V.liftCoachBusy=false;render();
+  },
+  liftplan(){getDay(V.date).lift={ex:planExercises(V.date)};save(V.date);render()},
+  liftskip(){
+    const L=liftOf(V.date);
+    if(L&&liftHas(L)&&!L.skip&&!confirm('Bu günün girdiğin setleri silinip gün "atlandı" olarak işaretlensin mi?'))return;
+    getDay(V.date).lift={skip:true};save(V.date);render();
+  },
+  /* program (Ayarlar → Program) */
+  pkind(ds){
+    const D=planDays(),p=D[ds.w]||(D[ds.w]={t:'rest',name:'',ex:[]});
+    p.t=ds.t==='train'?'train':'rest';p.ex=p.ex||[];
+    if(planActive()&&!S.plan.since)S.plan.since=TODAY;
+    persist('plan');render();
+  },
+  padd(ds){
+    const el=document.getElementById('pnew'+ds.w),n=String(el&&el.value||'').trim().replace(/\s+/g,' ').slice(0,40);
+    if(!n){toast('Hareket adını yaz.',true);return}
+    const D=planDays(),p=D[ds.w]||(D[ds.w]={t:'train',name:'',ex:[]});p.ex=p.ex||[];
+    if(p.ex.some(e=>normEx(e.n)===normEx(n))){toast('Bu hareket bu günde zaten var.',true);return}
+    const known=liftHistory()[normEx(n)];
+    p.ex.push({n:known?known.name:n,s:3});
+    if(!S.plan.since)S.plan.since=TODAY;
+    persist('plan');render();
+    setTimeout(()=>{const f=document.getElementById('pnew'+ds.w);if(f)f.focus()},50);
+  },
+  pdel(ds){const p=planDays()[ds.w];if(!p||!p.ex)return;p.ex.splice(+ds.x,1);persist('plan');render()},
+  pup(ds){const p=planDays()[ds.w],x=+ds.x;if(!p||!p.ex||x<1)return;[p.ex[x-1],p.ex[x]]=[p.ex[x],p.ex[x-1]];persist('plan');render()},
   wundo(){const d=getDay(V.date);if(d.water&&d.water.length){d.water.pop();save(V.date);render()}},
   /* takviye */
   stk(ds){
@@ -1851,7 +2032,7 @@ function importFile(file){
       if(!o||typeof o!=='object'||(!o.months&&!o.profile))throw 0;
       if(!confirm('Yedekteki veriler mevcut verilerinin üzerine yazılacak. Devam edilsin mi?'))return;
       S.months={};applyData(o);
-      persist('core');Object.keys(S.months).forEach(k=>persist(k));
+      persist('core');Object.keys(S.months).forEach(k=>persist(k));if(Object.keys((S.plan||{}).days||{}).length)persist('plan');
       flush();render();
     }catch(e){alert('Bu dosya geçerli bir Spor Hocam yedeği değil.')}
   };
@@ -1867,8 +2048,9 @@ document.addEventListener('click',e=>{
   }
 });
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='exnew'){e.preventDefault();A.exadd();return}
+  if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='pnew'){e.preventDefault();A.padd(e.target.dataset);return}
   if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='bc'){e.preventDefault();A.bcsearch();return}
-  if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('.hrow')){e.preventDefault();A.open(e.target.dataset)}});
+  if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('.hrow')){e.preventDefault();(A[e.target.dataset.a]||A.open)(e.target.dataset)}});
 function jump(v){if(!v||v>TODAY||v===V.date&&V.tab==='today')return;V.date=v;V.tab='today';V.preview=null;V.edit=null;V.undo=null;window.scrollTo(0,0);render()}
 document.addEventListener('change',e=>{
   const t=e.target,k=t.dataset&&t.dataset.i;if(!k)return;
@@ -1898,6 +2080,9 @@ document.addEventListener('input',e=>{
       if(k==='lw')s.w=n===''?'':Math.min(1000,Math.max(0,n));else s.r=n===''?'':Math.min(200,Math.max(0,Math.round(n)));
       save(V.date);const sm=document.getElementById('liftsum');if(sm)sm.textContent=liftSumTxt(V.date)}
   }
+  else if(k==='pname'){const p=planDays()[ds.w];if(p){p.name=t.value.slice(0,40);persist('plan')}}
+  else if(k==='pex'){const p=planDays()[ds.w],e=p&&p.ex&&p.ex[+ds.x];if(e){e.n=t.value.slice(0,40);persist('plan')}}
+  else if(k==='pset'){const p=planDays()[ds.w],e=p&&p.ex&&p.ex[+ds.x],n=Math.round(num(t.value));if(e&&n>=1&&n<=10){e.s=n;persist('plan')}}
   else if(k==='mfield'){const m=getDay(V.date).meals[+ds.ix];if(m){const v=num(t.value);m[ds.k]=v>=0?v:0;save(V.date)}}
   else if(k==='sname'){const s=S.supps.find(x=>x.id===ds.id);if(s){s.name=t.value;persist('core')}}
   else if(k==='sdose'){const s=S.supps.find(x=>x.id===ds.id);if(s){s.dose=t.value;persist('core')}}
