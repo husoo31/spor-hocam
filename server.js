@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createRefDb, pickBest } from './refdb.js';
 import { createLocalFoods } from './localfoods.js';
+import { parseSegments, buildNights, mergeNights } from './sleep.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const env = process.env;
@@ -929,6 +930,13 @@ function burnDate(raw, maxBackDays) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d < dayStr(-maxBackDays) || d > dayStr(1)) throw new HttpError(400, 'bad_date', `Tarih YYYY-AA-GG biçiminde ve son ${maxBackDays} gün içinde olmalı.`);
   return d;
 }
+// Uyku geceleri de ayrı bir kayıtta ('sleep'); gün = uyanılan gün. Biçim: sleep.js buildNights
+const SLEEP_DOC = 'sleep';
+function readSleep(userId) {
+  try { const r = q.docGet.get(userId, SLEEP_DOC); const d = r ? JSON.parse(r.data) : {}; return { days: d.days || {}, last: d.last || null, info: d.info || null }; }
+  catch (e) { return { days: {}, last: null, info: null }; }
+}
+function writeSleep(userId, s) { q.putDoc.run(userId, SLEEP_DOC, JSON.stringify({ days: s.days, last: s.last, info: s.info }), Date.now()); }
 function genSyncKey() { return 'sh_' + rnd(24).toString('base64url'); }
 
 async function handleApi(req, res, url) {
@@ -939,28 +947,52 @@ async function handleApi(req, res, url) {
 
   // iPhone Kısayolları buradan veri gönderir. Çerez değil, kişisel anahtar kullanır (tarayıcıdan tetiklenemez), bu yüzden CSRF başlığı aranmaz.
   if (p === '/api/health-sync' && m === 'POST') {
-    const b = await readBody(req, 5000);
+    // Anahtar Authorization başlığındaysa gövde (uyku parçaları) büyük olabilir; başlıksız (gövdede anahtar) istekler küçük tutulur
     const auth = String(req.headers.authorization || '');
-    const key = (/^bearer\s+/i.test(auth) ? auth.replace(/^bearer\s+/i, '') : String(b.key || '')).trim();
+    const bearer = /^bearer\s+/i.test(auth);
+    const b = await readBody(req, bearer ? 160000 : 5000);
+    const key = (bearer ? auth.replace(/^bearer\s+/i, '') : String(b.key || '')).trim();
     rlCheck(`sync:${ip}`);
     const u = key.length >= 20 && key.length <= 100 ? q.userBySync.get(sha256(key)) : null;
     if (!u) { rlFail(`sync:${ip}`); throw new HttpError(401, 'bad_key', 'Anahtar geçersiz. Uygulamada Ayarlar → Sağlık bölümünden yeni anahtar üret.'); }
     if (u.disabled) throw new HttpError(403, 'disabled', 'Hesap askıya alınmış.');
-    const kcal = parseNum(b.kcal ?? b.activeKcal);
-    if (!Number.isFinite(kcal) || kcal < 0 || kcal > 15000) throw new HttpError(400, 'bad_kcal', 'kcal 0-15000 arasında bir sayı olmalı.');
+    // İstek kalori, uyku ya da ikisini birden taşıyabilir (eski kısayollar yalnızca kcal gönderir). Boş metin "gönderilmedi" sayılır.
+    const given = v => v !== undefined && v !== null && (Array.isArray(v) ? v.length > 0 : String(v).trim() !== '');
+    const kRaw = b.kcal ?? b.activeKcal, hasKcal = given(kRaw), hasSleep = given(b.sleep);
+    let kcal = NaN;
+    if (hasKcal || !hasSleep) {
+      kcal = parseNum(kRaw);
+      if (!Number.isFinite(kcal) || kcal < 0 || kcal > 15000) throw new HttpError(400, 'bad_kcal', 'kcal 0-15000 arasında bir sayı olmalı (ya da sleep gönder).');
+    }
     const date = burnDate(b.date, 7);
     const stepsN = b.steps === undefined ? NaN : parseNum(b.steps);
     const h = readHealth(u.id);
-    let result = 'saved';
-    // Anahtar açıkken elle giriş kapalıdır; Sağlık'tan gelen değer, eskiden elle girilmiş olanın da üstüne yazar
-    if (kcal === 0) result = 'skipped_zero'; // kilitli telefonda Sağlık verisi okunamaz ve 0 gelebilir: dolu değeri ezme
-    else {
-      h.days[date] = { kcal: Math.round(kcal), ...(Number.isFinite(stepsN) && stepsN >= 0 && stepsN <= 200000 ? { steps: Math.round(stepsN) } : {}), src: 'sync', ts: Date.now() };
-      h.last = Date.now();
-      writeHealth(u.id, h);
+    let result = 'no_kcal';
+    if (hasKcal || !hasSleep) {
+      result = 'saved';
+      // Anahtar açıkken elle giriş kapalıdır; Sağlık'tan gelen değer, eskiden elle girilmiş olanın da üstüne yazar
+      if (kcal === 0) result = 'skipped_zero'; // kilitli telefonda Sağlık verisi okunamaz ve 0 gelebilir: dolu değeri ezme
+      else {
+        h.days[date] = { kcal: Math.round(kcal), ...(Number.isFinite(stepsN) && stepsN >= 0 && stepsN <= 200000 ? { steps: Math.round(stepsN) } : {}), src: 'sync', ts: Date.now() };
+        h.last = Date.now();
+        writeHealth(u.id, h);
+      }
+    }
+    let sleep;
+    if (hasSleep) {
+      const { segs, skipped, unknown } = parseSegments(b.sleep, TZ);
+      const nights = buildNights(segs, TZ), lo = dayStr(-7), hi = dayStr(1);
+      for (const d of Object.keys(nights)) if (d < lo || d > hi) delete nights[d]; // çok eski/ileri tarihli geceler yazılmaz
+      const cur = readSleep(u.id), now = Date.now();
+      const minStart = segs.reduce((a, x) => Math.min(a, x.m0), Infinity) * 60000;
+      const mg = mergeNights(cur.days, nights, minStart);
+      const info = { ts: now, segments: segs.length, skipped, unknown, nights: Object.keys(nights).length };
+      writeSleep(u.id, { days: mg.days, last: now, info });
+      const latest = Object.keys(nights).sort().pop();
+      sleep = { segments: segs.length, skipped, unknown, saved: mg.saved, kept: mg.kept, date: latest || null, asleepMin: latest ? (mg.days[latest] || {}).asleep || 0 : 0 };
     }
     rlOk(`sync:${ip}`);
-    return send(res, 200, { ok: true, result, date, kcal: (h.days[date] || {}).kcal || 0 });
+    return send(res, 200, { ok: true, result, date, kcal: (h.days[date] || {}).kcal || 0, ...(sleep ? { sleep } : {}) });
   }
 
   if (m !== 'GET') {
@@ -1126,6 +1158,10 @@ async function handleApi(req, res, url) {
   if (p === '/api/burn' && m === 'GET') {
     const h = readHealth(user.id);
     return send(res, 200, { days: h.days, sync: { enabled: !!user.sync_hash, last: h.last } });
+  }
+  if (p === '/api/sleep' && m === 'GET') {
+    const s = readSleep(user.id);
+    return send(res, 200, { days: s.days, last: s.last, info: s.info });
   }
   if (p === '/api/burn' && m === 'POST') { // elle giriş (yalnızca Apple Sağlık bağlı değilken); kcal boşsa o günün kaydı silinir
     const b = await readBody(req, 2000);

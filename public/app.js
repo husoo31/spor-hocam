@@ -86,14 +86,19 @@ let V={sys:{open:false,busy:false,data:null,err:''},tab:'today',date:TODAY,food:
 let col=null,dbErr=false,LSKEY='spor-hocam';
 /* yakılan kalori (Apple Sağlık / elle): sunucuda ayrı bir kayıtta; HB = { 'YYYY-MM-DD': {kcal, steps?, src} } */
 let HB={},HS={enabled:false,last:null};
+/* uyku (Apple Sağlık): SL = { 'YYYY-MM-DD' (uyanılan gün): {bed,asleepAt,wake,out,asleep,inBed,deep,core,rem,unspec,awake,nap,stages,segs} }, SLM = {last,info} */
+let SL={},SLM={last:null,info:null};
 const burnOf=d=>num((HB[d]||{}).kcal);
+const cacheBurn=()=>{try{localStorage.setItem(LSKEY+':burn',JSON.stringify({HB,HS,SL,SLM}))}catch(e){}};
 async function loadBurn(){
   try{
-    const j=await api('/burn');HB=j.days||{};HS=j.sync||{enabled:false,last:null};
-    try{localStorage.setItem(LSKEY+':burn',JSON.stringify({HB,HS}))}catch(e){}
+    const [j,s]=await Promise.all([api('/burn'),api('/sleep').catch(()=>null)]);
+    HB=j.days||{};HS=j.sync||{enabled:false,last:null};
+    if(s){SL=s.days||{};SLM={last:s.last||null,info:s.info||null}}
+    cacheBurn();
     return true;
   }catch(e){
-    try{const c=JSON.parse(localStorage.getItem(LSKEY+':burn')||'null');if(c){HB=c.HB||{};HS=c.HS||HS}}catch(x){}
+    try{const c=JSON.parse(localStorage.getItem(LSKEY+':burn')||'null');if(c){HB=c.HB||{};HS=c.HS||HS;SL=c.SL||{};SLM=c.SLM||SLM}}catch(x){}
     return false;
   }
 }
@@ -102,10 +107,14 @@ const SC_NAME='Spor Hocam Saglik';
 const isIOS=()=>/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 let pullAt=0;
 async function burnRefresh(){
-  const before=JSON.stringify(HB);
+  const before=JSON.stringify([HB,SL]);
   const ok=await loadBurn();
-  if(!ok||JSON.stringify(HB)===before)return false;
-  if(pullAt&&Date.now()-pullAt<600000){pullAt=0;toast('Yakılan kalori güncellendi: '+r0(burnOf(TODAY))+' kcal',true)}
+  if(!ok||JSON.stringify([HB,SL])===before)return false;
+  if(pullAt&&Date.now()-pullAt<600000){
+    pullAt=0;
+    const parts=[];if(burnOf(TODAY))parts.push('yakılan '+r0(burnOf(TODAY))+' kcal');if(SL[TODAY])parts.push('uyku '+fmtDur(SL[TODAY].asleep));
+    toast('Sağlık güncellendi'+(parts.length?': '+parts.join(' · '):''),true);
+  }
   if(!V.burnEdit)render();
   return true;
 }
@@ -314,7 +323,7 @@ async function enterApp(user){
   AUTH.cur=user;LSKEY='spor-hocam:'+user.id;col=colApi;dbErr=false;
   try{localStorage.setItem('spor-hocam-last',JSON.stringify(user))}catch(e){}
   S=defaultS();Object.keys(chunkN).forEach(k=>delete chunkN[k]);dirty.clear();
-  HB={};HS={enabled:false,last:null};
+  HB={};HS={enabled:false,last:null};SL={};SLM={last:null,info:null};
   await load();
   await loadBurn();
   applyTheme();
@@ -366,7 +375,7 @@ const FORMS={
   },
   async burn(fd){
     const raw=String(fd.get('kcal')||'').trim();
-    try{const r=await api('/burn',{method:'POST',body:{date:V.date,kcal:raw===''?null:raw}});HB=r.days||{};V.burnEdit=false;try{localStorage.setItem(LSKEY+':burn',JSON.stringify({HB,HS}))}catch(e){}}
+    try{const r=await api('/burn',{method:'POST',body:{date:V.date,kcal:raw===''?null:raw}});HB=r.days||{};V.burnEdit=false;cacheBurn()}
     catch(e){toast(errMsg(e))}
   },
   async adm_backup(fd){
@@ -436,8 +445,9 @@ const FORMS={
     if(c!=='SİL'&&c!=='SIL')throw {message:'Onaylamak için SİL yazmalısın.'};
     clearTimeout(pt);dirty.clear();
     await api('/docs',{method:'DELETE'});
-    try{localStorage.removeItem(LSKEY);localStorage.removeItem(LSKEY+':dirty')}catch(e){}
+    try{localStorage.removeItem(LSKEY);localStorage.removeItem(LSKEY+':dirty');localStorage.removeItem(LSKEY+':burn')}catch(e){}
     Object.keys(chunkN).forEach(k=>delete chunkN[k]);
+    HB={};SL={};SLM={last:null,info:null}; // sunucu yakılan kalori ve uyku kayıtlarını da sildi
     S=defaultS();applyTheme();
     Object.assign(V,{tab:'settings',st:'data',preview:null,spreview:null,edit:null,undo:null,smsg:{ok:true,t:'Tüm verilerin silindi. Hesabın duruyor.'}});
   }
@@ -916,6 +926,44 @@ function photoBtn(listKey,inputKey,label){
   return `<label class="btn alt sm filebtn" ${full?'style="opacity:.45;pointer-events:none"':''}>📷 ${label}<input type="file" accept="${esc(imgAccept())}" multiple data-i="${inputKey}" style="display:none"></label>`;
 }
 const precBtn=()=>`<button class="chip ${S.prefs.precise?'on':''}" data-a="prec" aria-pressed="${!!S.prefs.precise}">🔍 Hassas mod: ${S.prefs.precise?'açık':'kapalı'}</button>`;
+/* ---------- uyku kartı (Apple Sağlık) ---------- */
+const fmtDur=m=>{m=r0(num(m));const h=Math.floor(m/60),mm=m%60;return h?`${h} sa${mm?' '+mm+' dk':''}`:`${mm} dk`};
+const hhmm=ts=>{const x=new Date(ts);return pad(x.getHours())+':'+pad(x.getMinutes())};
+const SLC={d:'var(--sl-deep)',c:'var(--sl-core)',r:'var(--sl-rem)',a:'var(--sl-awake)',u:'var(--sl-core)'};
+const SLROW={a:0,r:1,c:2,u:2,d:3};
+function sleepChart(n){
+  const tot=Math.max(1,num(n.inBed));
+  const bars=(n.segs||[]).map(([c,o,l])=>`<i style="left:${(num(o)/tot*100).toFixed(2)}%;width:${Math.max(.4,num(l)/tot*100).toFixed(2)}%;${n.stages?`top:${SLROW[c]*25}%;`:''}background:${SLC[c]||SLC.u}"></i>`).join('');
+  return `<div class="hyp ${n.stages?'':'flat'}" role="img" aria-label="Uyku evreleri çizelgesi">${bars}</div>
+    <div class="row between mut small num" style="margin-top:4px"><span>${hhmm(n.bed)}</span><span>${hhmm(n.wake)}</span></div>`;
+}
+function sleepCard(d){
+  const n=SL[d],isToday=d===TODAY;
+  const when=isToday?'dün gece':dmid(addDays(d,-1))+' gecesi';
+  // Bağlı değilken "Sağlık'a bağla"; bağlanınca o düğme kalkar, yerine "Sağlık'tan çek" gelir (yalnızca bugün)
+  const btn=!isToday?'':HS.enabled?`<button class="btn sm" data-a="pullhealth">🔄 Sağlık'tan çek</button>`
+    :`<button class="btn alt sm" data-a="tab" data-t="settings" data-st="health">🍎 Sağlık'a bağla</button>`;
+  let h=`<div class="card sleep"><div class="row between"><h3>😴 Uyku</h3><span class="mut small">${when}</span></div>`;
+  if(!n){
+    h+=`<p class="mut small" style="margin:8px 0 ${btn?'12px':'0'}">${HS.enabled
+      ?(SLM.last?'Bu gün için uyku verisi yok.':'Uyku verisi henüz gelmedi. Düğmeyle çek; gelmezse kısayoluna uyku adımlarını ekle (Ayarlar → Sağlık).')
+      :(isToday?'Uyku süreni, evrelerini ve yattığın–uyandığın saatleri iPhone\'daki Sağlık uygulamasından çekmek için Sağlık\'a bağlan.':'Bu gün için uyku verisi yok.')}</p>${btn?`<div class="btnrow">${btn}</div>`:''}</div>`;
+    return h;
+  }
+  const eff=n.inBed>0?r0(n.asleep/n.inBed*100):0;
+  h+=`<div class="row" style="align-items:flex-end;margin-top:6px;gap:12px;flex-wrap:wrap"><div class="num" style="font-size:40px;font-weight:700;line-height:1">${fmtDur(n.asleep)}</div>
+    <div class="mut small" style="margin-bottom:4px"><b class="num" style="color:var(--ink)">${hhmm(n.asleepAt)} → ${hhmm(n.wake)}</b> arası uyudun</div></div>
+    <div style="margin-top:12px">${sleepChart(n)}</div>`;
+  const chips=[];
+  if(n.stages){[['d','Derin',n.deep],['c','Çekirdek',n.core],['r','REM',n.rem]].forEach(([c,l,m])=>{if(m>0)chips.push(`<span class="chip"><i class="sdot" style="background:${SLC[c]}"></i>${l} <b class="num">${fmtDur(m)}</b> <span class="mut">%${r0(m/n.asleep*100)}</span></span>`)});
+    if(n.unspec>0)chips.push(`<span class="chip"><i class="sdot" style="background:${SLC.u}"></i>Evresiz <b class="num">${fmtDur(n.unspec)}</b></span>`)}
+  if(n.awake>0)chips.push(`<span class="chip"><i class="sdot" style="background:${SLC.a}"></i>Uyanık <b class="num">${fmtDur(n.awake)}</b></span>`);
+  if(chips.length)h+=`<div style="margin-top:10px">${chips.join('')}</div>`;
+  h+=`<div class="mut small" style="margin-top:4px;line-height:1.6">Yatağa girdin <b class="num" style="color:var(--ink)">${hhmm(n.bed)}</b> · yatakta ${fmtDur(n.inBed)}${eff?` · verimlilik %${eff}`:''}${n.nap>0?` · +${fmtDur(n.nap)} gündüz uykusu`:''}</div>`;
+  if(!n.stages)h+=`<div class="mut small" style="margin-top:4px">Evre verisi yok (derin/REM için Apple Watch ile uyku takibi gerekir); yalnızca toplam süre gösteriliyor.</div>`;
+  if(btn)h+=`<div class="btnrow" style="margin-top:12px">${btn}</div>`;
+  return h+'</div>';
+}
 function viewToday(){
   const g=S.goals,d=V.date,t=totals(d),st=suppTotals(d),day=getDayRO(d),meals=day.meals||[];
   const burn=burnOf(d),bd=HB[d]||{},net=t.kcal-burn,left=g.kcal-net,over=left<0,deficit=g.tdee?g.tdee+burn-t.kcal:null;
@@ -939,6 +987,7 @@ function viewToday(){
       ${[['Protein',t.protein,g.protein,'var(--pro)'],['Karb.',t.carbs,g.carbs,'var(--carb)'],['Yağ',t.fat,g.fat,'var(--fat)']].map(([n,v,tg,c])=>`<div class="macro"><div class="mut small">${n}</div><div class="v num">${r0(v)}<span class="mut small"> /${tg}g</span></div>${bar(v/tg*100,c)}</div>`).join('')}
     </div>`;
   }
+  h+=sleepCard(d);
   h+=waterCard(d);
   h+=`<div class="card"><h3>Ne yedin?</h3>
     <p class="mut small" style="margin:4px 0 8px">Doğal yaz: “2 yumurta, 1 dilim tam buğday ekmeği, bir bardak süt”. Gramaj ya da etiket değeri yazarsan aynen kullanırım.</p>
@@ -1079,7 +1128,7 @@ function viewHistory(){
   else{
     h+=`<div class="card" style="padding:4px 14px">${shown.map(d=>{
       const t=totals(d),x=getDayRO(d),w=waterSum(d),sup=Object.keys(x.sup||{}).length;
-      return `<div class="hrow" data-a="open" data-d="${d}" role="button" tabindex="0"><div style="min-width:74px"><b>${dmid(d)}</b></div><div class="grow"><div class="num"><b>${r0(t.kcal)}</b> kcal · P ${r0(t.protein)}g · K ${r0(t.carbs)}g · Y ${r0(t.fat)}g</div><div class="mut small">${w?`💧 ${(w/1000).toFixed(1).replace('.',',')} L`:''}${sup?` · 💊 ${sup} takviye`:''}${x.weight?` · ⚖ ${f1(x.weight)} kg`:''}${x.lift&&x.lift.rest?' · 😴 dinlenme':x.lift&&x.lift.skip?' · ⏭ atlandı':liftHas(x.lift)?` · 🏋 ${x.lift.ex.filter(e=>(e.s||[]).some(s=>num(s.r)>0)).length} hareket`:''}</div></div><span class="mut">›</span></div>`;
+      return `<div class="hrow" data-a="open" data-d="${d}" role="button" tabindex="0"><div style="min-width:74px"><b>${dmid(d)}</b></div><div class="grow"><div class="num"><b>${r0(t.kcal)}</b> kcal · P ${r0(t.protein)}g · K ${r0(t.carbs)}g · Y ${r0(t.fat)}g</div><div class="mut small">${w?`💧 ${(w/1000).toFixed(1).replace('.',',')} L`:''}${SL[d]?` · 😴 ${fmtDur(SL[d].asleep)}`:''}${sup?` · 💊 ${sup} takviye`:''}${x.weight?` · ⚖ ${f1(x.weight)} kg`:''}${x.lift&&x.lift.rest?' · 😴 dinlenme':x.lift&&x.lift.skip?' · ⏭ atlandı':liftHas(x.lift)?` · 🏋 ${x.lift.ex.filter(e=>(e.s||[]).some(s=>num(s.r)>0)).length} hareket`:''}</div></div><span class="mut">›</span></div>`;
     }).join('')}</div>`;
     if(all.length>shown.length)h+=`<button class="btn alt full" data-a="hmore">Tümünü göster (${all.length})</button>`;
   }
@@ -1531,9 +1580,10 @@ function setHealth(){
   const url=location.origin+'/api/health-sync',key=V.syncKey,kk=key||'ANAHTARIN';
   const cur=kcalFor(num(S.profile.act)),base=kcalFor(BASE_ACT);
   let h=`${msgBox()}<div class="card"><h3>Apple Sağlık (iPhone)</h3>
-    <p class="small mut" style="margin:4px 0 8px">iPhone'daki Sağlık uygulamasında kayıtlı <b>aktif enerji</b> (yürüyüş, kardiyo, antrenman) Bugün ekranındaki <b>🔄 Sağlık'tan çek</b> düğmesine basınca gelir ve o günün kalorisinden düşülür: 2800 kcal yedin, 300 kcal yaktıysan net 2500 kcal sayılır. Safari/ana ekran uygulaması Sağlık verisini doğrudan okuyamadığı için düğme, iPhone'a kurduğun bir kısayolu çalıştırır; kısayol veriyi okuyup buraya gönderir. Kısayolu bir kez kurman gerekir.</p>
+    <p class="small mut" style="margin:4px 0 8px">iPhone'daki Sağlık uygulamasında kayıtlı <b>aktif enerji</b> (yürüyüş, kardiyo, antrenman) Bugün ekranındaki <b>🔄 Sağlık'tan çek</b> düğmesine basınca gelir ve o günün kalorisinden düşülür: 2800 kcal yedin, 300 kcal yaktıysan net 2500 kcal sayılır. Aynı düğme <b>uykunu</b> da getirir (süre, yattığın–uyandığın saat, derin/çekirdek/REM): Bugün ekranında Su kartının üstünde görünür. Safari/ana ekran uygulaması Sağlık verisini doğrudan okuyamadığı için düğme, iPhone'a kurduğun bir kısayolu çalıştırır; kısayol veriyi okuyup buraya gönderir. Kısayolu bir kez kurman gerekir.</p>
     ${HS.enabled?'':`<div class="small" style="margin-bottom:10px;padding:10px 12px;border-radius:12px;background:var(--card2,rgba(127,127,127,.12))"><b>Nereden başlayacağım?</b><br>1) Aşağıdaki <b>Anahtar üret</b> düğmesine bas.<br>2) Çıkan anahtarı kopyala, aşağıdaki <b>Kısayol kurulumu</b> adımlarını iPhone'da uygula.<br>3) Bugün ekranında <b>🔄 Sağlık'tan çek</b> düğmesi belirir.${isIOS()?'':'<br><span class="mut">Not: Kısayol iPhone\'da kurulur; bu sayfayı iPhone\'da da açabilirsin.</span>'}</div>`}
-    <div class="small" style="margin-bottom:10px">Durum: ${HS.enabled?`<b style="color:var(--fat)">● Bağlı</b> · son eşitleme ${HS.last?fmtTs(HS.last):'henüz yok'}`:'<b>○ Kurulmadı</b>'}</div>
+    <div class="small" style="margin-bottom:10px">Durum: ${HS.enabled?`<b style="color:var(--fat)">● Bağlı</b> · son kalori eşitlemesi ${HS.last?fmtTs(HS.last):'henüz yok'}`:'<b>○ Kurulmadı</b>'}
+      ${HS.enabled?`<br>Uyku: ${SLM.last?`son eşitleme ${fmtTs(SLM.last)}${SLM.info?` · ${SLM.info.segments} parça okundu, ${SLM.info.nights} gece bulundu${SLM.info.skipped?`, <b style="color:var(--bad)">${SLM.info.skipped} satır atlandı</b>`:''}`:''}`:'henüz gelmedi (aşağıdaki Uyku kurulumunu yap)'}${SLM.info&&SLM.info.unknown&&SLM.info.unknown.length?`<br><span style="color:var(--bad)">Tanınmayan evre adı: ${SLM.info.unknown.map(esc).join(', ')}</span>`:''}`:''}</div>
     <div class="btnrow"><button class="btn sm" data-a="synckey">${HS.enabled?'Yeni anahtar üret':'Anahtar üret'}</button>${HS.enabled?'<button class="btn alt sm" data-a="pullhealth">🔄 Şimdi Sağlık\'tan çek</button>':''}${HS.enabled?'<button class="btn alt sm" data-a="syncoff">Bağlantıyı kapat</button>':''}</div></div>`;
   if(key)h+=`<div class="card" style="border-color:var(--pro)"><h3>Kişisel anahtarın</h3><div class="code num" id="rc" style="word-break:break-all">${esc(key)}</div>
     <p class="small mut">Bir daha gösterilmeyecek; şimdi kısayola yapıştır. Kaybedersen yenisini üret (eskisi iptal olur). Bu anahtarı kimseyle paylaşma.</p>
@@ -1550,9 +1600,21 @@ function setHealth(){
       <li>Eylem ekle: <b>İstatistikleri Hesapla</b> → <i>Toplam</i> (girdi: Sağlık Örnekleri).</li>
       <li>Eylem ekle: <b>Tarihi Biçimlendir</b>: Şimdiki Tarih, Özel biçim <span class="num">yyyy-MM-dd</span>.</li>
       <li>Eylem ekle: <b>URL İçeriklerini Al</b>. URL: <span class="num" id="surl" style="word-break:break-all">${esc(url)}</span> <button class="chip" data-a="copyurl" style="margin:0">Kopyala</button><br>Yöntem: <b>POST</b>. Başlıklar: <span class="num">Authorization</span> = <span class="num" style="word-break:break-all">Bearer ${esc(kk)}</span><br>İstek Gövdesi: <b>JSON</b>, iki alan: <span class="num">kcal</span> (Sayı) = <i>İstatistikler</i> sonucu, <span class="num">date</span> (Metin) = <i>Biçimlendirilmiş Tarih</i>.</li>
+      <li>Uykuyu da istiyorsan aşağıdaki <b>Uyku kurulumu</b> kartındaki adımları, bu <b>URL İçeriklerini Al</b> eyleminden ÖNCE ekle (gövdeye üçüncü alan <span class="num">sleep</span> gelir).</li>
       <li>Kısayolu kaydet. İlk çalıştırmada iPhone Sağlık verisine ve internete erişim izni isteyecek; izin ver.</li>
       <li>Artık Bugün ekranındaki <b>🔄 Sağlık'tan çek</b> düğmesine basman yeter. Kısayollar uygulaması kısa süre açılır, veriyi gönderir; uygulamaya dönünce yakılan kalori güncellenmiş olur.</li></ol>
-    <p class="small mut" style="margin:10px 0 0"><b>Not:</b> Düğme yalnızca iPhone/iPad'de görünür. Safari'de açtıysan iş bitince kendiliğinden geri döner; ana ekrana eklenmiş uygulamada Kısayollar'dan elle geri dönmen gerekebilir. Kısayolu istersen her gece otomatik de çalıştırabilirsin (Kısayollar → Otomasyon → Günün Saati), ama iPhone kilitliyken Sağlık verisi okunamaz; o durumda sunucu gelen 0'ı yok sayar. Apple Sağlık bağlıyken yakılan kalori elle girilemez, yalnızca Sağlık'tan gelir. Elle girmek istersen yukarıdan <b>Bağlantıyı kapat</b>'a bas (kayıtların silinmez).</p></div>`;
+    <p class="small mut" style="margin:10px 0 0"><b>Not:</b> Düğme yalnızca iPhone/iPad'de çalışır. Safari'de açtıysan iş bitince kendiliğinden geri döner; ana ekrana eklenmiş uygulamada Kısayollar'dan elle geri dönmen gerekebilir. Kısayolu istersen her gece otomatik de çalıştırabilirsin (Kısayollar → Otomasyon → Günün Saati), ama iPhone kilitliyken Sağlık verisi okunamaz; o durumda sunucu gelen 0'ı yok sayar. Apple Sağlık bağlıyken yakılan kalori elle girilemez, yalnızca Sağlık'tan gelir. Elle girmek istersen yukarıdan <b>Bağlantıyı kapat</b>'a bas (kayıtların silinmez).</p></div>`;
+  h+=`<div class="card"><h3>😴 Uyku kurulumu (aynı kısayola ek, 5 dk)</h3>
+    <p class="small mut" style="margin:4px 0 8px">Yeni kısayol gerekmez: kalori için kurduğun <span class="num">${esc(SC_NAME)}</span> kısayoluna şu eylemleri ekle. Hepsi <b>URL İçeriklerini Al</b>'dan önce olmalı.</p>
+    <ol class="small" style="margin:8px 0 0;padding-left:20px;line-height:1.7">
+      <li>Eylem ekle: <b>Sağlık Örneklerini Bul</b>. Filtreler: Tür = <i>Uyku</i> (Uyku Analizi), Başlangıç Tarihi = <i>son 2 gün içinde</i>. Sırala: <i>Başlangıç Tarihi, En Eskiden Yeniye</i>. <b>Limit kapalı</b> olsun (yoksa gecenin yarısı gelmez).</li>
+      <li>Eylem ekle: <b>Her Öğe İçin Tekrarla</b>; girdi: bu uyku örnekleri (kalori adımındaki örneklerle karıştırma).</li>
+      <li>Döngünün İÇİNE <b>Metin</b> eylemi ekle ve tam şunu kur (arada dik çizgi <span class="num">|</span> olsun): <br><span class="num" style="word-break:break-all">[Tekrarlanan Öğe → Değer] | [Tekrarlanan Öğe → Başlangıç Tarihi] | [Tekrarlanan Öğe → Bitiş Tarihi]</span><br>İki tarih değişkenine dokun → <b>Tarih Biçimi</b> → <b>ISO 8601</b> seç. Uyku adımının "Değer" alanı Core / Deep / REM / Awake / In Bed gibi evre adını verir (Türkçe de olur: Çekirdek, Derin, Uyanık…).</li>
+      <li>Metnin hemen altına, yine döngünün içine <b>Değişkene Ekle</b>: değişken adı <span class="num">UykuSatirlari</span>.</li>
+      <li>Döngü bittikten sonra <b>Metni Birleştir</b>: <i>UykuSatirlari</i>, ayırıcı <b>Yeni Satırlar</b>.</li>
+      <li><b>URL İçeriklerini Al</b>'ın JSON gövdesine üçüncü alan ekle: <span class="num">sleep</span> (Metin) = <i>Birleştirilmiş Metin</i>. Kalori ve tarih alanları olduğu gibi kalır.</li>
+      <li>Bu kadar. Bugün ekranında <b>🔄 Sağlık'tan çek</b>'e bas; Su kartının üstündeki Uyku kartı dolar. Her gün otomatik gelsin istersen: Kısayollar → <b>Otomasyon</b> → <b>+</b> → <b>Uyku</b> → <b>Uyandığımda</b> (alarmı kapattığında) → <b>Hemen Çalıştır</b> → eylem: <b>Kısayolu Çalıştır</b> → <span class="num">${esc(SC_NAME)}</span>. Telefon o sırada açık olduğu için Sağlık verisi okunur. (Menü adları iOS sürümüne göre biraz değişebilir.)</li></ol>
+    <p class="small mut" style="margin:10px 0 0"><b>İpuçları:</b> Derin/Çekirdek/REM ayrımı için Apple Watch ile uyku takibi gerekir; yalnızca iPhone varsa toplam süre ve yatış–uyanış saati gelir. Gün, <b>uyandığın gün</b> sayılır: dün 23:00'te yatıp bugün 07:00'de kalktıysan bugünün kartında görünür. Bir şey ters giderse yukarıdaki <b>Durum</b> satırı kaç parça okunduğunu ve tanınmayan evre adı olup olmadığını gösterir.</p></div>`;
   return h;
 }
 function setPlan(){
@@ -2092,11 +2154,11 @@ const A={
     const g=S.goals,days=[];
     for(let i=13;i>=0;i--){
       const d=addDays(TODAY,-i),t=totals(d),dd=getDayRO(d);
-      if((dd.meals||[]).length||dd.weight||waterSum(d)||dd.lift){const o={tarih:d,kilo:dd.weight||null,su_ml:waterSum(d),takviyeler:Object.values(dd.sup||{}).map(s=>s.name+' x'+s.c)};if(burnOf(d))o.yakilan_aktif_kcal=r0(burnOf(d));if(dd.lift)o.antrenman=dd.lift.rest?'dinlenme':(dd.lift.ex||[]).map(e=>e.n+': '+(e.s||[]).filter(x=>num(x.r)>0).map(x=>(num(x.w)||'BW')+'x'+num(x.r)+(x.f?'(tükeniş)':'')).join(', '));NK.forEach(k=>{if(t[k])o[k]=r1(t[k])});const st=suppTotals(d);o.takviyeden=Object.fromEntries(NK.map(k=>[k,r1(st[k])]).filter(([,v])=>v>0));days.push(o)}
+      if((dd.meals||[]).length||dd.weight||waterSum(d)||dd.lift){const o={tarih:d,kilo:dd.weight||null,su_ml:waterSum(d),takviyeler:Object.values(dd.sup||{}).map(s=>s.name+' x'+s.c)};if(burnOf(d))o.yakilan_aktif_kcal=r0(burnOf(d));if(SL[d]){o.uyku_saat=r1(SL[d].asleep/60);if(SL[d].stages)o.derin_uyku_dk=SL[d].deep}if(dd.lift)o.antrenman=dd.lift.rest?'dinlenme':(dd.lift.ex||[]).map(e=>e.n+': '+(e.s||[]).filter(x=>num(x.r)>0).map(x=>(num(x.w)||'BW')+'x'+num(x.r)+(x.f?'(tükeniş)':'')).join(', '));NK.forEach(k=>{if(t[k])o[k]=r1(t[k])});const st=suppTotals(d);o.takviyeden=Object.fromEntries(NK.map(k=>[k,r1(st[k])]).filter(([,v])=>v>0));days.push(o)}
     }
     const snap=statsSnapshot();
     try{
-      V.coach=await ask(`Sen samimi ama dürüst, bilimsel bilgisi güçlü bir beslenme koçusun. Aşağıdaki son 14 günlük verileri analiz et ve Türkçe yaz.\n\nProfil: ${JSON.stringify(S.profile)}\nGünlük hedefler: ${JSON.stringify(g)} (yakilan_aktif_kcal varsa o gün Apple Sağlık/elle girilen aktif enerjidir; kalori hedefi yenenden bu miktar düşülerek, yani net kaloriyle karşılaştırılır)\nBesin referans değerleri: ${JSON.stringify(nTargets())}\nGünlük kayıtlar (besin değerleri yiyecek + takviye toplamıdır; anahtarlar ve birimler: ${KEYDOC}; yazılmayan anahtar 0 demektir; "takviyeden" alanı sadece takviyelerin katkısı; "antrenman" alanı o günkü ağırlık antrenmanıdır, hareket: kilo x tekrar biçiminde, BW = vücut ağırlığı, "dinlenme" = dinlenme günü): ${JSON.stringify(days)}\nKilo trendi (kg/hafta, son 28 gün): ${snap.tr?r1(snap.tr.perWeek):'yok'}. Tahmini gerçek günlük harcama: ${snap.real?r0(snap.real):'hesaplanamadı'}. Su hedefi: ${waterGoal()} ml.\n\nŞu başlıklarla yaz: BESLENME (kalori, protein ve makro uyumu; yağ kalitesi, lif, şeker, sodyum), VİTAMİN VE MİNERALLER (takviyeler dahil hangileri eksik kalıyor, hangileri fazla veya üst sınıra yakın; takviye gerçekten gerekli mi yoksa yiyeceklerle mi kapanır), SU VE KİLO (su alışkanlığı, kilo trendi ve kalori açığı hedefle uyumlu mu, sürdürülebilir mi), ANTRENMAN (yalnızca antrenman verisi varsa: hangi hareketlerde güçlendiği, hangilerinin durağan kaldığı, set/tekrar dengesi; yoksa bu başlığı yazma), ÖNÜMÜZDEKİ HAFTA İÇİN 4 NET ADIM. Veri azsa ya da eksikse bunu açıkça söyle, uydurma; sayılara dayan. Besin değerlerinin yapay zekâ tahmini olduğunu ve eksik kayıt mikro besinleri düşük gösterebileceğini hesaba kat. Markdown işaretleri kullanma, başlıkları BÜYÜK HARFLE yaz, düz metin olsun, en fazla 320 kelime. Tıbbi teşhis koyma; takviye dozu üst sınıra yakınsa ya da olağandışı bir durum görürsen doktor/eczacıya danışmasını söyle.`,{modelTier:'complex',cache:false},false);
+      V.coach=await ask(`Sen samimi ama dürüst, bilimsel bilgisi güçlü bir beslenme koçusun. Aşağıdaki son 14 günlük verileri analiz et ve Türkçe yaz.\n\nProfil: ${JSON.stringify(S.profile)}\nGünlük hedefler: ${JSON.stringify(g)} (yakilan_aktif_kcal varsa o gün Apple Sağlık/elle girilen aktif enerjidir; kalori hedefi yenenden bu miktar düşülerek, yani net kaloriyle karşılaştırılır; uyku_saat varsa o günün sabahı uyanılan gecenin uyku süresidir)\nBesin referans değerleri: ${JSON.stringify(nTargets())}\nGünlük kayıtlar (besin değerleri yiyecek + takviye toplamıdır; anahtarlar ve birimler: ${KEYDOC}; yazılmayan anahtar 0 demektir; "takviyeden" alanı sadece takviyelerin katkısı; "antrenman" alanı o günkü ağırlık antrenmanıdır, hareket: kilo x tekrar biçiminde, BW = vücut ağırlığı, "dinlenme" = dinlenme günü): ${JSON.stringify(days)}\nKilo trendi (kg/hafta, son 28 gün): ${snap.tr?r1(snap.tr.perWeek):'yok'}. Tahmini gerçek günlük harcama: ${snap.real?r0(snap.real):'hesaplanamadı'}. Su hedefi: ${waterGoal()} ml.\n\nŞu başlıklarla yaz: BESLENME (kalori, protein ve makro uyumu; yağ kalitesi, lif, şeker, sodyum), VİTAMİN VE MİNERALLER (takviyeler dahil hangileri eksik kalıyor, hangileri fazla veya üst sınıra yakın; takviye gerçekten gerekli mi yoksa yiyeceklerle mi kapanır), SU VE KİLO (su alışkanlığı, kilo trendi ve kalori açığı hedefle uyumlu mu, sürdürülebilir mi), ANTRENMAN (yalnızca antrenman verisi varsa: hangi hareketlerde güçlendiği, hangilerinin durağan kaldığı, set/tekrar dengesi; yoksa bu başlığı yazma), ÖNÜMÜZDEKİ HAFTA İÇİN 4 NET ADIM. Veri azsa ya da eksikse bunu açıkça söyle, uydurma; sayılara dayan. Besin değerlerinin yapay zekâ tahmini olduğunu ve eksik kayıt mikro besinleri düşük gösterebileceğini hesaba kat. Markdown işaretleri kullanma, başlıkları BÜYÜK HARFLE yaz, düz metin olsun, en fazla 320 kelime. Tıbbi teşhis koyma; takviye dozu üst sınıra yakınsa ya da olağandışı bir durum görürsen doktor/eczacıya danışmasını söyle.`,{modelTier:'complex',cache:false},false);
     }catch(e){V.coach=(V.coach?V.coach+'\n\n':'')+errMsg(e)}
     V.coachBusy=false;render();
   },

@@ -3,11 +3,12 @@
   padding-top:env(safe-area-inset-top,0px);
   --bg:#F2F3EE;--card:#FFFFFF;--ink:#12171A;--mut:#66706B;--line:#DDE0D8;
   --kcal:#12171A;--pro:#2744F5;--carb:#E0A100;--fat:#1F9C8E;--bad:#D6336C;--soft:#E9EBE4;--water:#2B8CE0;
+  --sl-deep:#3A33C9;--sl-core:#5B8DEF;--sl-rem:#A25FE0;--sl-awake:#E8892B;
   --r:14px;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#0F1412;--card:#171E1B;--ink:#ECEFEA;--mut:#8D9892;--line:#27302C;--kcal:#ECEFEA;--pro:#6F86FF;--carb:#F0B72A;--fat:#3DC4B4;--bad:#FF6B9A;--soft:#1F2824;--water:#5DB2FF;}}
-:root[data-theme="dark"]{--bg:#0F1412;--card:#171E1B;--ink:#ECEFEA;--mut:#8D9892;--line:#27302C;--kcal:#ECEFEA;--pro:#6F86FF;--carb:#F0B72A;--fat:#3DC4B4;--bad:#FF6B9A;--soft:#1F2824;--water:#5DB2FF}
+  --bg:#0F1412;--card:#171E1B;--ink:#ECEFEA;--mut:#8D9892;--line:#27302C;--kcal:#ECEFEA;--pro:#6F86FF;--carb:#F0B72A;--fat:#3DC4B4;--bad:#FF6B9A;--soft:#1F2824;--water:#5DB2FF;--sl-deep:#6F68F5;--sl-core:#7BA5FF;--sl-rem:#C58AF5;--sl-awake:#F2A24D;}}
+:root[data-theme="dark"]{--bg:#0F1412;--card:#171E1B;--ink:#ECEFEA;--mut:#8D9892;--line:#27302C;--kcal:#ECEFEA;--pro:#6F86FF;--carb:#F0B72A;--fat:#3DC4B4;--bad:#FF6B9A;--soft:#1F2824;--water:#5DB2FF;--sl-deep:#6F68F5;--sl-core:#7BA5FF;--sl-rem:#C58AF5;--sl-awake:#F2A24D}
 *,*::before,*::after{box-sizing:inherit}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:'Archivo',system-ui,-apple-system,'Segoe UI',sans-serif;font-size:15px;line-height:1.4;-webkit-text-size-adjust:100%}
@@ -46,6 +47,10 @@ label{display:block;font-size:12.5px;color:var(--mut);margin:0 0 4px}
 .hero .big.over{color:var(--bad)}
 .bar{height:10px;background:var(--soft);border-radius:6px;overflow:hidden;margin-top:12px}
 .bar>i{display:block;height:100%;border-radius:6px;background:var(--kcal)}
+.hyp{position:relative;height:64px;background:var(--soft);border-radius:8px;overflow:hidden}
+.hyp i{position:absolute;height:22%;border-radius:2px}
+.hyp.flat i{top:0;height:100%;border-radius:0}
+.sdot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
 .bar.thin{height:7px;margin-top:6px}
 .split{display:flex;height:14px;border-radius:7px;overflow:hidden;margin-top:8px;gap:2px}
 .split i{display:block;height:100%}

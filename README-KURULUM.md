@@ -10,7 +10,8 @@ public/              arayüz, manifest, servis çalışanı, ikonlar
 Dockerfile           Coolify bu dosyayla derler (ARM64 ve AMD64 uyumlu)
 .env.example         ortam değişkenleri örneği
 refdb.js            USDA + Open Food Facts araması, birim dönüşümü, eşleştirme
-test/*.test.mjs      testler:  node test/server.test.mjs, test/ref.test.mjs, test/admin.test.mjs, test/persist.test.mjs, test/health.test.mjs
+sleep.js            Apple Sağlık uyku parçalarını (evre, başlangıç, bitiş) gecelere çevirir
+test/*.test.mjs      testler:  node test/server.test.mjs, test/ref.test.mjs, test/admin.test.mjs, test/persist.test.mjs, test/health.test.mjs, test/sleep.test.mjs
 ```
 
 ## 1) GitHub'a yükle
@@ -91,6 +92,16 @@ Safari/PWA iPhone'un Sağlık verisini doğrudan okuyamaz; bu yüzden iPhone'un 
 - **Çift sayım uyarısı:** Profildeki aktivite düzeyi hedefe zaten günlük hareket payı ekler. *Ayarlar → Sağlık → Hedefi hareketsiz bazdan hesapla* açılınca *Hedeflerimi hesapla* aktivite çarpanını 1,2 alır; yakılan kalori ayrıca eklenir. Elle değiştirdiğin hedef yeniden hesaplamada ezilir, bu yüzden otomatik uygulanmaz.
 - **Elle giriş:** Apple Sağlık bağlı değilken Bugün ekranında 🔥 düğmesiyle girilir. Sağlık bağlanınca (anahtar üretilince) elle giriş kapanır; sunucu da elle girişi 409 ile reddeder, ekranda yalnızca gelen değer görünür. Daha önce elle girilmiş bir günün üstüne Sağlık verisi yazılır. Elle girmek için *Ayarlar → Sağlık → Bağlantıyı kapat*.
 - **Sınırlar:** iPhone kilitliyken Sağlık verisi okunamaz ve kısayol 0 gönderebilir; sunucu 0'ı yok sayar ve dolu değeri korur. Anahtar sunucuda yalnızca özet (hash) olarak saklanır; kaybedersen yenisini üret. Yanlış anahtar denemeleri sınırlanır. Yakılan kalori verisi kullanıcının `health` kaydında durur, yedeğe ve veritabanı yedeğine dahildir (JSON kullanıcı yedeğine dahil değildir).
+
+### Apple Sağlık ile uyku (iPhone)
+Kalori ile **aynı kısayol ve aynı anahtar** kullanılır; yeni bir bağlantı gerekmez. Bugün ekranında Su kartının üstünde **😴 Uyku** kartı görünür: toplam uyku, uykuya dalış → uyanış saati, yatağa giriş, yatakta kalma süresi, verimlilik, evre çizelgesi ve Derin / Çekirdek / REM / Uyanık süreleri (yüzdeleriyle). Sağlık bağlı değilken kartta **🍎 Sağlık'a bağla** düğmesi, bağlanınca onun yerine **🔄 Sağlık'tan çek** düğmesi çıkar.
+- **Kurulum:** Kalori kısayoluna (*Ayarlar → Sağlık → Uyku kurulumu*) şunlar eklenir: Sağlık Örneklerini Bul (Tür: Uyku, son 2 gün, limit kapalı) → Her Öğe İçin Tekrarla → içinde Metin `Değer | Başlangıç (ISO 8601) | Bitiş (ISO 8601)` + Değişkene Ekle → Metni Birleştir (Yeni Satırlar) → URL İçeriklerini Al gövdesine `sleep` alanı. İstenirse Kısayollar → Otomasyon → Uyku → *Uyandığımda* ile her sabah kendiliğinden çalışır.
+- **İstek:** `POST /api/health-sync`, gövde `{"kcal": 300, "date": "2026-10-06", "sleep": "Core|2026-10-05T23:10:00+03:00|2026-10-05T23:40:00+03:00
+Deep|..."}`. `kcal` ve `sleep` ikisi de isteğe bağlıdır ama en az biri gerekir; yalnızca `kcal` gönderen eski kısayollar aynen çalışır. `sleep` satır satır metin ya da `[{stage,start,end}]` dizisi olabilir; ayırıcı `|`, `;` veya sekme; zaman ISO 8601 (`+03:00` / `Z`), ofsetsiz (sunucu saat dilimi, `AI_TZ`), `GG.AA.YYYY SS:DD` ya da epoch olabilir. Evre adları İngilizce ya da Türkçe (Core/Çekirdek, Deep/Derin, REM, Awake/Uyanık, In Bed/Yatakta, Asleep/Uyku) veya HealthKit kodu 0–5 olabilir; tanınmayan ad atlanır ve yanıtta `sleep.unknown` ile bildirilir.
+- **Hesap:** Aynı dakikada birden çok kaynak (iPhone "Yatakta/Uyku" + Watch evreleri) varsa evre önceliği Derin > REM > Çekirdek > Uyanık > evresiz uyku > yatakta; böylece çift sayım olmaz. Aralarında 90 dakikadan uzun boşluk olan parçalar ayrı oturum sayılır; gün **uyanılan gündür** (Apple Sağlık gibi). Aynı güne düşen en uzun oturum geceyi, diğerleri gündüz uykusunu (`nap`) oluşturur; 15 dakikadan kısa oturumlar sayılmaz. Uyanış = son uyku dakikasıdır; sonrasında yatakta kalınan süre uykuya katılmaz.
+- **Koruma:** Veri penceresinin kenarında kesilmiş (eksik) ya da alakasız kısa bir paket, daha önce kaydedilmiş dolu geceyi küçültmez; aynı gecenin güncel/uzamış hâli eskinin yerine geçer. Son 120 gece saklanır; uyanış günü son 7 gün – yarın aralığında olmayan geceler yazılmaz.
+- **Saklama:** Kullanıcının `sleep` kaydında (`health` kaydından ayrı) durur; veritabanı yedeğine dahildir. `GET /api/sleep` oturumlu kullanıcıya geceleri ve son eşitleme bilgisini (okunan parça, atlanan satır, tanınmayan evre) verir; Ayarlar → Sağlık → Durum satırı bunu gösterir.
+- **Sınırlar:** Derin/Çekirdek/REM ayrımı yalnızca Apple Watch (ya da uyku evresi yazan bir cihaz) ile gelir; yalnızca iPhone varsa toplam süre ve yatış–uyanış saati görünür. Kısayol arayüzü iOS sürümüne göre farklı adlar kullanabilir; iPhone'daki kısayol adımları cihazda ayrıca denenmelidir.
 
 ## 6) Yönetici paneli
 **Kim yönetici?** Siteye ilk kayıt olan hesap otomatik yönetici olur (davet kodu olarak `INVITE_CODE` ile). Bu yüzden siteyi yayınladıktan hemen sonra ilk hesabı sen aç. Yönetici olunca *Ayarlar → Yönetim* sekmesi görünür.
