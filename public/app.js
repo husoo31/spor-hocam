@@ -1628,13 +1628,13 @@ function setPlan(){
   WD_ORDER.forEach(w=>{
     const p=P[w]||{t:'rest',ex:[]},train=p.t==='train';
     h+=`<div class="card"><div class="row between"><h3>${WD_NAME[w]}</h3>
-      <div class="seg" style="margin:0;min-width:210px"><button data-a="pkind" data-w="${w}" data-t="rest" class="${train?'':'on'}">😴 Dinlenme</button><button data-a="pkind" data-w="${w}" data-t="train" class="${train?'on':''}">🏋 Antrenman</button></div></div>`;
+      <div class="seg" style="margin:0;min-width:210px"><button data-a="plankind" data-w="${w}" data-t="rest" class="${train?'':'on'}">😴 Dinlenme</button><button data-a="plankind" data-w="${w}" data-t="train" class="${train?'on':''}">🏋 Antrenman</button></div></div>`;
     if(train){
       h+=`<div style="margin-top:10px"><label for="pn${w}">Antrenman adı (isteğe bağlı)</label><input id="pn${w}" data-i="pname" data-w="${w}" value="${esc(p.name||'')}" placeholder="örn. Push, Bacak, Üst vücut" maxlength="40" autocomplete="off"></div>`;
       h+=(p.ex||[]).map((e,x)=>`<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)">
         <div class="row" style="gap:6px"><input data-i="pex" data-w="${w}" data-x="${x}" value="${esc(e.n)}" aria-label="Hareket adı" maxlength="40" autocomplete="off">
-          ${x>0?`<button class="ghost" data-a="pup" data-w="${w}" data-x="${x}" aria-label="Yukarı taşı">↑</button>`:'<span style="width:34px;flex:none"></span>'}
-          <button class="ghost" data-a="pdel" data-w="${w}" data-x="${x}" aria-label="Hareketi sil">✕</button></div>
+          ${x>0?`<button class="ghost" data-a="planup" data-w="${w}" data-x="${x}" aria-label="Yukarı taşı">↑</button>`:'<span style="width:34px;flex:none"></span>'}
+          <button class="ghost" data-a="plandel" data-w="${w}" data-x="${x}" aria-label="Hareketi sil">✕</button></div>
         <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap">
           <input inputmode="numeric" data-i="pset" data-w="${w}" data-x="${x}" value="${esc(e.s||3)}" aria-label="Set sayısı" style="width:60px;flex:none;text-align:center"><span class="mut small">set ×</span>
           <input inputmode="numeric" data-i="prep" data-w="${w}" data-x="${x}" value="${e.r?esc(e.r):''}" placeholder="tekrar" aria-label="Hedef tekrar" style="width:76px;flex:none;text-align:center"><span class="mut small">tekrar @</span>
@@ -1645,7 +1645,7 @@ function setPlan(){
           <input id="pns${w}" inputmode="numeric" value="3" aria-label="Set sayısı" style="width:60px;flex:none;text-align:center"><span class="mut small">set ×</span>
           <input id="pnr${w}" inputmode="numeric" placeholder="tekrar" aria-label="Hedef tekrar" style="width:76px;flex:none;text-align:center"><span class="mut small">tekrar @</span>
           <input id="pnk${w}" inputmode="decimal" placeholder="kg" aria-label="Kaç kiloyla" style="width:76px;flex:none;text-align:center"><span class="mut small">kg</span>
-          <button class="btn sm" style="margin-left:auto;min-width:70px" data-a="padd" data-w="${w}">Ekle</button></div></div>`;
+          <button class="btn sm" style="margin-left:auto;min-width:70px" data-a="planadd" data-w="${w}">Ekle</button></div></div>`;
     }else h+=`<p class="small mut" style="margin:8px 0 0">Bu gün dinlenme.</p>`;
     h+=`</div>`;
   });
@@ -2084,13 +2084,13 @@ const A={
     getDay(V.date).lift={skip:true};save(V.date);render();
   },
   /* program (Ayarlar → Program) */
-  pkind(ds){
+  plankind(ds){
     const D=planDays(),p=D[ds.w]||(D[ds.w]={t:'rest',name:'',ex:[]});
     p.t=ds.t==='train'?'train':'rest';p.ex=p.ex||[];
     if(planActive()&&!S.plan.since)S.plan.since=TODAY;
     persist('plan');render();
   },
-  padd(ds){
+  planadd(ds){
     const el=document.getElementById('pnew'+ds.w),n=String(el&&el.value||'').trim().replace(/\s+/g,' ').slice(0,40);
     if(!n){toast('Hareket adını yaz.',true);return}
     const D=planDays(),p=D[ds.w]||(D[ds.w]={t:'train',name:'',ex:[]});p.ex=p.ex||[];
@@ -2106,8 +2106,8 @@ const A={
     persist('plan');render();
     setTimeout(()=>{const f=document.getElementById('pnew'+ds.w);if(f)f.focus()},50);
   },
-  pdel(ds){const p=planDays()[ds.w];if(!p||!p.ex)return;p.ex.splice(+ds.x,1);persist('plan');render()},
-  pup(ds){const p=planDays()[ds.w],x=+ds.x;if(!p||!p.ex||x<1)return;[p.ex[x-1],p.ex[x]]=[p.ex[x],p.ex[x-1]];persist('plan');render()},
+  plandel(ds){const p=planDays()[ds.w];if(!p||!p.ex)return;p.ex.splice(+ds.x,1);persist('plan');render()},
+  planup(ds){const p=planDays()[ds.w],x=+ds.x;if(!p||!p.ex||x<1)return;[p.ex[x-1],p.ex[x]]=[p.ex[x],p.ex[x-1]];persist('plan');render()},
   wundo(){const d=getDay(V.date);if(d.water&&d.water.length){d.water.pop();save(V.date);render()}},
   /* takviye */
   stk(ds){
@@ -2280,7 +2280,7 @@ document.addEventListener('click',e=>{
   }
 });
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='exnew'){e.preventDefault();A.exadd();return}
-  if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='pnew'){e.preventDefault();A.padd(e.target.dataset);return}
+  if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='pnew'){e.preventDefault();A.planadd(e.target.dataset);return}
   if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='bc'){e.preventDefault();A.bcsearch();return}
   if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('.hrow')){e.preventDefault();(A[e.target.dataset.a]||A.open)(e.target.dataset)}});
 function jump(v){if(!v||v>TODAY||v===V.date&&V.tab==='today')return;V.date=v;V.tab='today';V.preview=null;V.edit=null;V.undo=null;window.scrollTo(0,0);render()}
