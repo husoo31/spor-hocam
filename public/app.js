@@ -1829,7 +1829,8 @@ function render(){
   const views={today:viewToday,supp:viewSupp,hist:viewHistory,stats:viewStats,settings:viewSettings};
   const tabs=[['today','🍽','Bugün'],['supp','💊','Takviye'],['hist','🗓','Geçmiş'],['stats','📈','Analiz'],['settings','⚙️','Ayarlar']];
   app.innerHTML=`<div class="svw"><span class="small mut">👤 ${esc(S.profile.name||AUTH.cur.username)}</span><div class="row" style="gap:8px;margin:0"><div class="sv" id="sv">${statusHtml()}</div>${sysDot()}</div></div>`+(V.sys.open?sysPanel():'')+(views[V.tab]||viewToday)()+`<nav class="tabs" aria-label="Sekmeler"><div>${tabs.map(([k,i,t])=>`<button data-a="tab" data-t="${k}" class="${V.tab===k?'on':''}" ${V.tab===k?'aria-current="page"':''}><span>${i}</span>${t}</button>`).join('')}</div></nav>`;
-  document.querySelectorAll('.seg button.on').forEach(b=>{try{b.scrollIntoView({block:'nearest',inline:'center'})}catch(e){}});
+  // seçili sekmeyi yatayda ortala; scrollIntoView sayfayı da dikeyde kaydırdığı için (program ekranında 7 gün var, en alta atıyordu) yalnızca kutunun kendi kaydırması değiştirilir
+  document.querySelectorAll('.seg').forEach(s=>{const b=s.querySelector('button.on');if(!b||s.scrollWidth<=s.clientWidth)return;const sr=s.getBoundingClientRect(),br=b.getBoundingClientRect();s.scrollLeft+=br.left-sr.left-(sr.width-br.width)/2});
 }
 
 /* ---------- takviye istemleri ---------- */
