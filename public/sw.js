@@ -1,5 +1,5 @@
 // Spor Hocam servis çalışanı: arayüzü önbelleğe alır (çevrimdışı açılır), API isteklerine dokunmaz.
-const CACHE = 'sh-shell-v21';
+const CACHE = 'sh-shell-v23';
 const SHELL = ['/', '/app.js', '/barcode-util.js', '/style.css', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -19,12 +19,10 @@ self.addEventListener('fetch', e => {
         .catch(() => caches.match('/')));
     return;
   }
-  // önce önbellek, arkada güncelle
-  e.respondWith(caches.match(req).then(hit => {
-    const net = fetch(req).then(r => {
+  // önce ağ (düzeltmeler hemen gelsin), çevrimdışıysa önbellek
+  e.respondWith(
+    fetch(req).then(r => {
       if (r.ok) { const cp = r.clone(); caches.open(CACHE).then(c => c.put(req, cp)); }
       return r;
-    }).catch(() => hit);
-    return hit || net;
-  }));
+    }).catch(() => caches.match(req)));
 });
