@@ -170,3 +170,6 @@ Gerçek bir iPhone/Android cihazda denemedim; ilk kullanımda bir yerde sorun g�
 - Gemini model adları (`gemini-3-flash-preview` vb.) Google tarafından değiştirilebilir; ilk kurulumda `test_models.py --list` ile doğrula.
 - Çevrimdışıyken kayıt girebilirsin (internet gelince eşitlenir) ama yapay zekâ hesaplaması internet ister.
 - Docker derlemesini ve gerçek Gemini çağrısını geliştirme ortamımda deneyemedim; sunucu ve arayüz sahte Gemini sunucusuyla uçtan uca test edildi.
+
+## Sürüm notları
+Uygulamada **Ayarlar → Sürümler** sekmesi `public/changelog-data.js` dosyasından okur. Her güncellemede dosyanın sonuna yeni sürümü (v0.N) ekle: tarih-saat (Türkiye saati), yeni özellikler/düzeltmeler ve commit'ler. `node test/changelog.test.mjs` hash ve saatleri git geçmişiyle karşılaştırır.
