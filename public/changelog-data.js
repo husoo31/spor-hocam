@@ -59,5 +59,17 @@ window.CHANGELOG = [
     commits: [['a766457', '2026-10-13 15:20', 'İçecek tablosu: markalı içecekler miktara göre hesaplanır'], ['d2a91c6', '2026-10-13 15:23', 'İçecek tablosuna ünlü içecekler eklendi']] },
   { v: 'v0.12', d: '2026-10-13 15:35', title: 'Sürüm notları', items: [
       ['yeni', 'Ayarlar > Sürümler: yapılan her güncellemenin tarihi, saati, yeni özellikleri ve düzeltilen hataları; ilgili commit\'ler.']],
+    commits: [['b7aa0e4', '2026-10-13 15:30', 'Sürüm notları: Ayarlar > Sürümler (v0 → v0.12)']] },
+  { v: 'v0.13', d: '2026-10-14 00:20', title: 'Sporcu takibi', items: [
+      ['yeni', 'Sabah kontrolü ve hazır oluş skoru: enerji, uyku kalitesi, motivasyon, kas ağrısı ve stres (1–5) + Apple Sağlık uykusu birleşir; skora göre "yüklen / hafiflet / dinlen" önerisi. Analiz\'de 14 günlük grafik.'],
+      ['yeni', 'RIR (sette kaç tekrar daha yapabilirdin): her harekete girilir; Analiz > Güç\'te ortalama zorluk yorumu ve deload (hafif hafta) önerisi (uzun süre ara vermeme, hep tükeniş, düşük hazır oluş, güç düşüşü).'],
+      ['yeni', 'Dinlenme zamanlayıcısı: 60 sn / 90 sn / 2 dk / 3 dk, +30 sn; bitince titreşim ve ses.'],
+      ['yeni', 'Vücut ölçüleri (bel, göğüs, kol, kalça, uyluk, boyun, yağ oranı) ve ilk–son değişim; ilerleme fotoğrafları (ön/yan/arka, yan yana karşılaştırma) yalnızca bu cihazda saklanır.'],
+      ['yeni', 'Kardiyo kaydı (koşu, yürüyüş, bisiklet, yüzme, kürek, eliptik, HIIT): süre, mesafe, tempo/hız; haftalık toplam grafiği.'],
+      ['yeni', 'Protein planı: g/kg hedefi, öğüne göre dağılım ve antrenman öncesi/sonrası öğün türleri; tek öğüne yığılma ve antrenman sonrası eksik protein uyarısı.'],
+      ['yeni', 'Kilo hedefi (hedef kilo + isteğe bağlı tarih): kalan kg, gerçek hız, tahmini varış tarihi, güvenli hız aralığı ve önerilen günlük kalori.'],
+      ['yeni', 'Sakatlık / ağrı notları: Bugün ekranında uyarı; yapay zekâ koç yorumlarında dikkate alınır.'],
+      ['yeni', 'Hatırlatmalar: sabah kontrolü, takviye, tartılma günü, antrenman ve su; yalnızca yapılmamış işler için. Uygulama kapalıyken bildirim gelmez, açınca "Bekleyenler" kartı çıkar.'],
+      ['yeni', 'Analiz başında haftalık özet (kalori, protein, antrenman, uyku, hazır oluş, kilo; önceki haftayla fark ve yorum). Ayarlar > Veri\'den Excel/CSV indirme (günlük özet, yemekler, antrenman). Geçmişte 🔋 🏃 📏 rozetleri.']],
     commits: [] },
 ];
