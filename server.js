@@ -10,6 +10,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { createRefDb, pickBest } from './refdb.js';
 import { createLocalFoods } from './localfoods.js';
 import { parseSegments, buildNights, mergeNights } from './sleep.js';
+import { generateVapid, sendWebPush, endpointAllowed, fromB64u } from './webpush.js';
+import { dueReminders, validTz } from './pushrules.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const env = process.env;
@@ -122,6 +124,11 @@ CREATE TABLE IF NOT EXISTS invites(
 CREATE TABLE IF NOT EXISTS admin_log(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, admin_id TEXT, target_id TEXT, action TEXT NOT NULL, detail TEXT);
 CREATE INDEX IF NOT EXISTS admin_log_target ON admin_log(target_id);
+CREATE TABLE IF NOT EXISTS push_subs(
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL, tz TEXT NOT NULL,
+  cfg TEXT NOT NULL DEFAULT '{}', state TEXT NOT NULL DEFAULT '{}', created INTEGER NOT NULL, last_ok INTEGER, fails INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS push_user ON push_subs(user_id);
+CREATE TABLE IF NOT EXISTS push_log(sub_id TEXT NOT NULL, key TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(sub_id,key));
 `);
 function addCol(table, col, def) {
   if (!db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
@@ -356,6 +363,21 @@ function currentUser(req) {
   const u = q.userById.get(s.user_id);
   return u ? { user: u, tokenHash: h } : null;
 }
+Object.assign(q, {
+  pushAll: db.prepare('SELECT * FROM push_subs'),
+  pushUser: db.prepare('SELECT * FROM push_subs WHERE user_id=? ORDER BY created'),
+  pushByEp: db.prepare('SELECT * FROM push_subs WHERE endpoint=?'),
+  pushIns: db.prepare('INSERT INTO push_subs(id,user_id,endpoint,p256dh,auth,tz,cfg,state,created) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id,p256dh=excluded.p256dh,auth=excluded.auth,tz=excluded.tz,cfg=excluded.cfg,state=excluded.state,fails=0'),
+  pushSync: db.prepare('UPDATE push_subs SET cfg=?,state=?,tz=? WHERE id=?'),
+  pushDel: db.prepare('DELETE FROM push_subs WHERE id=?'),
+  pushDelUser: db.prepare('DELETE FROM push_subs WHERE user_id=?'),
+  pushOk: db.prepare('UPDATE push_subs SET last_ok=?,fails=0 WHERE id=?'),
+  pushFail: db.prepare('UPDATE push_subs SET fails=fails+1 WHERE id=?'),
+  pushLogHas: db.prepare('SELECT 1 FROM push_log WHERE sub_id=? AND key=?'),
+  pushLogIns: db.prepare('INSERT OR IGNORE INTO push_log(sub_id,key,ts) VALUES(?,?,?)'),
+  pushLogPurge: db.prepare('DELETE FROM push_log WHERE ts<?'),
+  pushLogDelSub: db.prepare('DELETE FROM push_log WHERE sub_id=?'),
+});
 function requireUser(req, allowMustChange = false) {
   const c = currentUser(req);
   if (!c) throw new HttpError(401, 'unauthorized', 'Oturumun süresi doldu, tekrar giriş yap.');
@@ -875,7 +897,7 @@ async function handleAdmin(req, res, p, m, cu, ip) {
       await adminPw(admin, b.adminPassword, ip);
       if (target.is_admin && q.adminCount.get().n <= 1) throw new HttpError(409, 'last_admin', 'Son yönetici silinemez.');
       logAdmin(admin.id, null, 'delete_user', { username: target.username });
-      tx(() => { q.delDocs.run(target.id); q.delUserSess.run(target.id); q.delUsage.run(target.id); q.delUser.run(target.id); });
+      tx(() => { q.delDocs.run(target.id); q.delUserSess.run(target.id); q.delUsage.run(target.id); q.pushDelUser.run(target.id); q.delUser.run(target.id); });
       return send(res, 200, { ok: true });
     }
   }
@@ -938,6 +960,101 @@ function readSleep(userId) {
 }
 function writeSleep(userId, s) { q.putDoc.run(userId, SLEEP_DOC, JSON.stringify({ days: s.days, last: s.last, info: s.info }), Date.now()); }
 function genSyncKey() { return 'sh_' + rnd(24).toString('base64url'); }
+
+/* ------------------------------------------------------------------ bildirim sunucusu (Web Push)
+   İstemci aboneliğini ve hatırlatma ayarını/bugünkü durumunu gönderir; sunucu her dakika kuralları (pushrules.js) değerlendirip yalnızca
+   yapılmamış işler için, belirlenen saatte bildirim yollar. Uygulama kapalıyken de çalışır. Yük şifreli (RFC 8291), imzalı (VAPID). */
+const PUSH_ANY = env.PUSH_ALLOW_ANY === 'true';
+const PUSH_SUBJECT = env.VAPID_SUBJECT || (env.PUBLIC_URL && /^https:\/\//.test(env.PUBLIC_URL) ? env.PUBLIC_URL : 'mailto:admin@spor-hocam.app');
+let vapidCache = null;
+function vapid() {
+  if (vapidCache) return vapidCache;
+  try { const v = JSON.parse(getSetting('vapid') || 'null'); if (v && v.jwk && v.publicKey) return (vapidCache = v); } catch (e) { /* yeniden üret */ }
+  vapidCache = generateVapid(); q.setPut.run('vapid', JSON.stringify(vapidCache));
+  return vapidCache;
+}
+const MAX_DEVICES = 5;
+const jsonOr = (s, d) => { try { const x = JSON.parse(s); return x && typeof x === 'object' ? x : d; } catch (e) { return d; } };
+// istemciden gelen ayar/durum: yalnızca bilinen alanlar, boyut sınırlı
+function cleanCfg(b) {
+  const r = (b && b.rem) || {}, rem = {};
+  for (const k of ['chk', 'supp', 'weigh', 'train']) if (typeof r[k] === 'string' && /^\d{1,2}:\d{2}$/.test(r[k])) rem[k] = r[k];
+  if (r.weighDay !== undefined && /^[0-6]$/.test(String(r.weighDay))) rem.weighDay = String(r.weighDay);
+  if (/^[1-3]$/.test(String(r.water))) rem.water = String(r.water);
+  return { rem, trainDays: Array.isArray(b && b.trainDays) ? [...new Set(b.trainDays.map(Number).filter(x => x >= 0 && x <= 6))] : [], hasSupps: !!(b && b.hasSupps), waterGoal: Math.min(10000, Math.max(0, Number(b && b.waterGoal) || 0)) };
+}
+function cleanState(s) {
+  s = s || {};
+  return { date: /^\d{4}-\d{2}-\d{2}$/.test(String(s.date)) ? s.date : '', chk: !!s.chk, suppDone: !!s.suppDone, weigh: !!s.weigh, trainDone: !!s.trainDone, waterMl: Math.min(20000, Math.max(0, Number(s.waterMl) || 0)) };
+}
+const pushTestHits = new Map();
+async function handlePush(req, res, user, p, m) {
+  if (p === '/api/push/key' && m === 'GET') return send(res, 200, { key: vapid().publicKey, devices: q.pushUser.all(user.id).length });
+  if (p === '/api/push/subscribe' && m === 'POST') {
+    const b = await readBody(req, 8000), sub = b.subscription || b, k = sub.keys || {};
+    if (!endpointAllowed(String(sub.endpoint || ''), PUSH_ANY)) throw new HttpError(400, 'bad_endpoint', 'Bu bildirim adresi desteklenmiyor.');
+    const pk = fromB64u(k.p256dh), au = fromB64u(k.auth);
+    if (pk.length !== 65 || pk[0] !== 4 || au.length !== 16) throw new HttpError(400, 'bad_keys', 'Abonelik anahtarları geçersiz.');
+    const tz = validTz(b.tz) ? String(b.tz) : 'Europe/Istanbul';
+    const mine = q.pushUser.all(user.id), existing = q.pushByEp.get(sub.endpoint);
+    if (!existing || existing.user_id !== user.id) { // sınırı aşarsa en eski cihaz düşer
+      for (const old of mine.slice(0, Math.max(0, mine.length - (MAX_DEVICES - 1)))) { q.pushDel.run(old.id); q.pushLogDelSub.run(old.id); }
+    }
+    q.pushIns.run('d' + crypto.randomBytes(8).toString('hex'), user.id, sub.endpoint, sub.keys.p256dh, sub.keys.auth, tz, JSON.stringify(cleanCfg(b.cfg)), JSON.stringify(cleanState(b.state)), Date.now());
+    return send(res, 200, { ok: true, devices: q.pushUser.all(user.id).length });
+  }
+  if (p === '/api/push/sync' && m === 'POST') {
+    const b = await readBody(req, 8000), row = q.pushByEp.get(String(b.endpoint || ''));
+    if (!row || row.user_id !== user.id) throw new HttpError(404, 'not_found', 'Bu cihaz için bildirim aboneliği yok.');
+    q.pushSync.run(JSON.stringify(cleanCfg(b.cfg)), JSON.stringify(cleanState(b.state)), validTz(b.tz) ? String(b.tz) : row.tz, row.id);
+    return send(res, 200, { ok: true });
+  }
+  if (p === '/api/push/unsubscribe' && m === 'POST') {
+    const b = await readBody(req, 4000), row = q.pushByEp.get(String(b.endpoint || ''));
+    if (row && row.user_id === user.id) { q.pushDel.run(row.id); q.pushLogDelSub.run(row.id); }
+    return send(res, 200, { ok: true, devices: q.pushUser.all(user.id).length });
+  }
+  if (p === '/api/push/test' && m === 'POST') {
+    const h = (pushTestHits.get(user.id) || []).filter(t => t > Date.now() - 3600000);
+    if (h.length >= 10) throw new HttpError(429, 'rate_limited', 'Saatte en fazla 10 deneme bildirimi gönderebilirsin.');
+    pushTestHits.set(user.id, [...h, Date.now()]);
+    const subs = q.pushUser.all(user.id);
+    if (!subs.length) throw new HttpError(404, 'no_device', 'Bu hesapta bildirim açık cihaz yok.');
+    const results = [];
+    for (const s of subs) results.push(await pushSend(s, { title: '🔔 Deneme bildirimi', body: 'Bildirim sunucusu çalışıyor. Hatırlatmalar böyle görünecek.', tag: 'sh-test' }));
+    return send(res, 200, { ok: results.some(r => r.ok), results: results.map(r => ({ ok: r.ok, status: r.status })) });
+  }
+  throw new HttpError(404, 'not_found', 'Bulunamadı.');
+}
+async function pushSend(sub, payload) {
+  const r = await sendWebPush(sub, payload, vapid(), { subject: PUSH_SUBJECT, ttl: 3600 });
+  if (r.ok) q.pushOk.run(Date.now(), sub.id);
+  else if (r.gone || sub.fails >= 20) { q.pushDel.run(sub.id); q.pushLogDelSub.run(sub.id); }
+  else q.pushFail.run(sub.id);
+  return r;
+}
+let pushBusy = false;
+async function pushTick(nowMs = Date.now()) {
+  if (pushBusy) return;
+  pushBusy = true;
+  try {
+    q.pushLogPurge.run(nowMs - 3 * 864e5);
+    for (const sub of q.pushAll.all()) {
+      let due = [];
+      try { due = dueReminders({ cfg: jsonOr(sub.cfg, {}), state: jsonOr(sub.state, {}), nowMs, tz: sub.tz }); } catch (e) { continue; }
+      const seen = new Set();
+      for (const d of due) {
+        if (seen.has(d.id) || q.pushLogHas.get(sub.id, d.key)) continue; // aynı anda birden çok su aralığı çakışsa bile tek bildirim
+        seen.add(d.id);
+        const r = await pushSend(sub, { title: d.title, body: d.body, tag: d.tag });
+        if (r.ok || (r.status >= 400 && r.status < 500)) q.pushLogIns.run(sub.id, d.key, nowMs); // geçici hatada (ağ, 5xx) kalan pencere içinde yeniden denenir
+        if (r.gone) break;
+      }
+    }
+  } catch (e) { console.error('[bildirim] hata:', e.message); }
+  finally { pushBusy = false; }
+}
+if (env.PUSH_DISABLED !== 'true') setInterval(() => { pushTick(); }, Number(env.PUSH_TICK_MS) || 60000).unref();
 
 async function handleApi(req, res, url) {
   const m = req.method, p = url.pathname;
@@ -1104,6 +1221,7 @@ async function handleApi(req, res, url) {
     return send(res, 200, { log: rows });
   }
 
+  if (p.startsWith('/api/push/')) return handlePush(req, res, user, p, m);
   if (p === '/api/status' && m === 'GET') return handleStatus(req, res);
   if (p === '/api/offline-estimate' && m === 'POST') {
     const b = await readBody(req, 20000);
@@ -1151,7 +1269,7 @@ async function handleApi(req, res, url) {
     const b = await readBody(req, 5000);
     await verifyUserPassword(user, b.password, ip);
     if (user.is_admin && q.adminCount.get().n <= 1) throw new HttpError(409, 'last_admin', 'Son yönetici hesabını silemezsin. Önce başka birini yönetici yap.');
-    tx(() => { q.delDocs.run(user.id); q.delUserSess.run(user.id); q.delUsage.run(user.id); q.delUser.run(user.id); });
+    tx(() => { q.delDocs.run(user.id); q.delUserSess.run(user.id); q.delUsage.run(user.id); q.pushDelUser.run(user.id); q.delUser.run(user.id); });
     return send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
   }
 

@@ -192,6 +192,7 @@ function persist(key){
   if(!AUTH.cur)return;
   try{
     dirty.add(key);mirror();storeDirty();
+    if(window.pushSyncSoon)pushSyncSoon(); // bildirim sunucusu açıksa hatırlatma ayarı/bugünkü durum eşitlenir
     if(col&&!dbErr){setStatus('saving');clearTimeout(pt);pt=setTimeout(flush,500)}
   }catch(e){console.error(e)}
 }
@@ -265,17 +266,22 @@ const waterGoal=()=>S.goals.water||r0(num(S.profile.weight)*35/50)*50||2500;
 /* ---------- hedef hesabı ---------- */
 // Yakılan kalori ayrıca eklendiği için (Apple Sağlık), "hareketsiz baz" seçiliyse aktivite çarpanı 1,2 alınır; aksi hâlde aktivite iki kez sayılırdı
 const BASE_ACT=1.2;
+// güncel kilo: son 30 gündeki son tartı, yoksa profildeki kilo
+const curWeight=()=>{const a=weightPts(30);return a.length?a[a.length-1].v:num(S.profile.weight)};
 function calcGoals(){
   const p=S.profile,w=num(p.weight),h=num(p.height),a=num(p.age);
   if(!w||!h||!a)return false;
   const bmr=10*w+6.25*h-5*a+(p.sex==='m'?5:-161);
   const tdee=bmr*(S.prefs.burnBase?BASE_ACT:num(p.act));
+  // hedef kilo (ve tarih) varsa kalori ona göre; yoksa seçili hedefe göre (yağ yak −%20, kas +300). Yön hedef kilodan gelir ve Hedef seçimini günceller.
+  const ca=window.ATH?ATH.calorieAdjust({weight:curWeight()||w,target:p.tw,targetDate:p.td,today:TODAY,tdee,bmr,goal:p.goal}):null;
+  if(ca&&ca.target)p.goal=ca.dir;
   const adj=p.goal==='cut'?-Math.min(500,tdee*.2):p.goal==='bulk'?300:0;
-  const kcal=Math.max(tdee+adj,bmr);
+  const kcal=ca?ca.kcal:Math.max(tdee+adj,bmr);
   const protein=w*(p.goal==='cut'?2:1.8);
   const fat=kcal*.25/9;
   const carbs=Math.max(0,(kcal-protein*4-fat*9)/4);
-  S.goals={kcal:r0(kcal),protein:r0(protein),carbs:r0(carbs),fat:r0(fat),tdee:r0(tdee),bmr:r0(bmr),water:r0(w*35/50)*50};
+  S.goals={kcal:r0(kcal),protein:r0(protein),carbs:r0(carbs),fat:r0(fat),tdee:r0(tdee),bmr:r0(bmr),water:r0(w*35/50)*50,auto:true};
   persist('core');return true;
 }
 
@@ -327,10 +333,13 @@ async function enterApp(user){
   await load();
   await loadBurn();
   applyTheme();
+  setTimeout(pushInit,1500);
   Object.assign(V,{tab:S.goals.kcal?'today':'settings',st:'profile',date:TODAY,preview:null,pnotes:[],food:'',err:'',edit:null,undo:null,fimgs:[],simgs:[],spreview:null,sedit:null,coach:'',smsg:null,newCode:null,pending:null,aerr:''});
 }
 async function leaveApp(){
   clearTimeout(pt);try{await flush()}catch(e){}
+  try{if(PUSH.on&&PUSH.ep){await api('/push/unsubscribe',{method:'POST',body:{endpoint:PUSH.ep}});const r=await navigator.serviceWorker.ready,sb=await r.pushManager.getSubscription();if(sb)await sb.unsubscribe()}}catch(e){} // çıkış yapınca bu cihaza bildirim gelmesin
+  PUSH.on=false;PUSH.ep='';
   try{await api('/logout',{method:'POST'})}catch(e){}
   try{localStorage.removeItem('spor-hocam-last')}catch(e){}
   AUTH.cur=null;col=null;dirty.clear();S=defaultS();applyTheme();
@@ -1046,6 +1055,7 @@ async function notify(title,body){
   toast(title+' — '+body,true);return false;
 }
 function remTick(){
+  if(typeof PUSH!=='undefined'&&PUSH.on)return; // bildirim sunucusu açıksa bildirimi o gönderir (çift bildirim olmasın)
   const R=remCfg();if(!R||!Object.keys(R).length)return;
   const seen={};
   remDue(new Date()).forEach(it=>{if(!it.fresh||remFired(it.key)||seen[it.id])return;seen[it.id]=1;remMark(it.key);notify(it.title,it.body)});
@@ -1057,6 +1067,44 @@ function remBanner(d){
   return `<div class="card" style="border-color:var(--carb)"><div class="small"><b>⏰ Bekleyenler</b></div>${list.map(x=>`<div class="small" style="margin-top:4px">${esc(x.title)} <span class="mut">— ${esc(x.body)}</span></div>`).join('')}</div>`;
 }
 setInterval(()=>{try{remTick()}catch(e){}},30000);
+/* ---------- bildirim sunucusu (Web Push): uygulama kapalıyken de hatırlatma ----------
+   Cihaz aboneliği + hatırlatma ayarı + bugünkü durum sunucuya eşitlenir; sunucu saati gelince yalnızca yapılmamış işler için bildirim yollar (server.js, pushrules.js). */
+const PUSH={on:false,busy:false,msg:'',ep:'',last:''};
+const pushOk=()=>!!(window.PushManager&&window.Notification&&navigator.serviceWorker)&&(location.protocol==='https:'||location.hostname==='localhost');
+const b64uBytes=s=>{const b=atob((s+'='.repeat((4-s.length%4)%4)).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(b,c=>c.charCodeAt(0))};
+const sameBytes=(a,b)=>a&&b&&a.byteLength===b.byteLength&&new Uint8Array(a).every((v,i)=>v===b[i]);
+function pushCfg(){
+  const days=planActive()?WD_ORDER.filter(w=>{const p=(S.plan.days||{})[w];return p&&p.t==='train'&&(p.ex||[]).length}):[];
+  return {rem:{...remCfg()},trainDays:days,hasSupps:S.supps.length>0,waterGoal:waterGoal()};
+}
+function pushState(){
+  const x=getDayRO(TODAY);
+  return {date:TODAY,chk:Object.keys(x.chk||{}).length>0,suppDone:S.supps.length>0&&Object.keys(x.sup||{}).length>=S.supps.length,weigh:!!x.weight,trainDone:liftHas(x.lift),waterMl:waterSum(TODAY)};
+}
+const pushTz=()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone}catch(e){return 'Europe/Istanbul'}};
+let pushT=null;
+function pushSyncSoon(){if(!PUSH.on)return;clearTimeout(pushT);pushT=setTimeout(pushSync,3000)}
+async function pushSync(){
+  if(!PUSH.on||!PUSH.ep||!AUTH.cur)return;
+  const body={endpoint:PUSH.ep,tz:pushTz(),cfg:pushCfg(),state:pushState()},j=JSON.stringify(body);
+  if(j===PUSH.last)return;PUSH.last=j;
+  try{await api('/push/sync',{method:'POST',body})}catch(e){PUSH.last=''}
+}
+async function pushRegister(sub){
+  const j=sub.toJSON();
+  await api('/push/subscribe',{method:'POST',body:{subscription:{endpoint:j.endpoint,keys:j.keys},tz:pushTz(),cfg:pushCfg(),state:pushState()}});
+  PUSH.ep=j.endpoint;PUSH.last='';
+}
+// giriş sonrası: bu cihazda abonelik varsa sunucuya yeniden bildir (adres değişmiş olabilir) ve eşitlemeyi aç
+async function pushInit(){
+  PUSH.on=false;PUSH.ep='';PUSH.last='';
+  if(!pushOk()||!AUTH.cur||AUTH.offline)return;
+  try{
+    const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();
+    if(sub&&Notification.permission==='granted'){await pushRegister(sub);PUSH.on=true;render()}
+  }catch(e){}
+}
+
 
 /* ---------- sporcu takibi: Analiz kartları ---------- */
 const liftDone=L=>!!L&&(L.ex||[]).some(e=>(e.s||[]).some(x=>num(x.r)>0));
@@ -1136,9 +1184,17 @@ function goalCard(){
   else if(G.rate!==undefined)lines.push(`Trend hedefe doğru gitmiyor${G.dir==='loss'?' (kilo azalmıyor)':' (kilo artmıyor)'}: kaloriyi gözden geçir.`);
   if(G.neededRate!==undefined)lines.push(`${esc(fd(S.profile.td))} tarihine yetişmek için gereken hız: <b class="num">${f2(G.neededRate)} kg/hafta</b>${G.aggressive?' — <span style="color:var(--bad)">çok agresif; tarihi uzatmayı düşün</span>':''}.`);
   else if(G.pastDue)lines.push('Belirlediğin hedef tarihi geçti; Profil\'den yenisini seç.');
-  const snap=statsSnapshot(),base=snap.real||S.goals.tdee||0;
-  if(base){let k=r0(base+G.dailyKcalDelta);if(S.goals.bmr&&k<S.goals.bmr)k=r0(S.goals.bmr);lines.push(`Önerilen günlük kalori ≈ <b class="num">${k} kcal</b> ${snap.real?'(gerçek harcamana göre)':'(formül harcamana göre)'}; şu anki hedefin ${S.goals.kcal||'–'} kcal.`)}
-  return h+lines.map(t=>`<p class="small" style="margin:8px 0 0">${t}</p>`).join('')+`<p class="note">Haftada vücut ağırlığının %0,5–0,75'i kadar kayıp (alırken %0,25–0,5) kas kaybını en aza indirir. Bu bir tahmindir; sağlık sorunun varsa uzmana danış.</p></div>`;
+  const snap=statsSnapshot(),btns=[];
+  const mk=tdee=>ATH.calorieAdjust({weight:cur,target:tw,targetDate:S.profile.td||'',today:TODAY,tdee,bmr:S.goals.bmr||0,goal:S.profile.goal});
+  if(S.goals.tdee){
+    const c=mk(S.goals.tdee);
+    lines.push(`Hedefine göre günlük kalori: <b class="num">${c.kcal} kcal</b> (harcama ${S.goals.tdee} ${c.delta<0?'−':'+'} ${Math.abs(c.delta)}) ≈ haftada ${f2(c.rate)} kg${c.eta?`, varış ${esc(fd(c.eta))}`:''}.`);
+    if(c.capped)lines.push(`<span style="color:var(--bad)">Tarihe yetişmek için gereken hız güvenli sınırın üstünde; kalori güvenli hızda tutuldu.</span>`);
+    if(Math.abs((S.goals.kcal||0)-c.kcal)>30){lines.push(`Şu anki hedefin ${S.goals.kcal||'–'} kcal.`);btns.push([c.kcal,'Günlük hedefimi '+c.kcal+' kcal yap'])}
+    else lines.push('<span style="color:var(--fat)">✓ Günlük kalori hedefin bu hedef kiloya uygun.</span>');
+  }
+  if(snap.real){const c2=mk(snap.real);if(Math.abs(c2.kcal-(S.goals.kcal||0))>60){lines.push(`Gerçek harcamana (~${r0(snap.real)} kcal, yediklerin ve kilo trendinden) göre önerilen: <b class="num">${c2.kcal} kcal</b>.`);btns.push([c2.kcal,'Gerçek harcamama göre '+c2.kcal+' kcal yap'])}}
+  return h+lines.map(t=>`<p class="small" style="margin:8px 0 0">${t}</p>`).join('')+(btns.length?`<div class="btnrow" style="margin-top:10px">${btns.map(([k,l])=>`<button class="btn alt sm" data-a="applykcal" data-k="${k}">${l}</button>`).join('')}</div>`:'')+`<p class="note">Haftada vücut ağırlığının %0,5–0,75'i kadar kayıp (alırken %0,25–0,5) kas kaybını en aza indirir. Bu bir tahmindir; sağlık sorunun varsa uzmana danış.</p></div>`;
 }
 function measStatsCard(){
   const rows=MEAS.map(([k,l,u])=>{const pts=[];Object.keys(S.months).sort().forEach(mk=>Object.keys((S.months[mk].days)||{}).sort().forEach(d=>{const v=num(((S.months[mk].days[d]||{}).meas||{})[k]);if(v>0)pts.push({d,v})}));return {k,l,u,pts}}).filter(x=>x.pts.length);
@@ -1229,9 +1285,15 @@ function remCard(){
     ${REM_DEF.map(([k,l])=>k==='water'
       ?`<div class="row between" style="margin-top:10px"><label for="rm${k}" style="margin:0">${l}</label><select id="rm${k}" data-i="rem" data-k="water" style="width:auto"><option value="">Kapalı</option>${[1,2,3].map(h=>`<option value="${h}" ${+R.water===h?'selected':''}>Her ${h} saatte (09–21)</option>`).join('')}</select></div>`
       :`<div class="row between" style="margin-top:10px"><label for="rm${k}" style="margin:0">${l}</label><input id="rm${k}" type="time" data-i="rem" data-k="${k}" value="${esc(R[k]||'')}" style="width:auto"></div>${k==='weigh'?`<div class="row between" style="margin-top:6px"><label for="rmwd" style="margin:0">Tartılma günü</label><select id="rmwd" data-i="rem" data-k="weighDay" style="width:auto"><option value="">Seç</option>${[1,2,3,4,5,6,0].map(w=>`<option value="${w}" ${R.weighDay!==undefined&&R.weighDay!==''&&+R.weighDay===w?'selected':''}>${WD_NAME[w]}</option>`).join('')}</select></div>`:''}`).join('')}
-    <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn alt sm" data-a="remperm">🔔 Bildirimlere izin ver</button><button class="btn alt sm" data-a="remtest">Deneme gönder</button></div>
+    ${pushOk()?`<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><div><b>🔔 Bildirim sunucusu</b> <span class="small mut">· uygulama kapalıyken de</span></div>
+      <p class="small mut" style="margin:6px 0 0">Sunucu, seçtiğin saatte ve yalnızca henüz yapmadığın işler için bu cihaza bildirim gönderir.</p>
+      <p class="small" style="margin:8px 0 0">${PUSH.on?'✅ Bu cihazda açık.':'Bu cihazda kapalı.'}</p>
+      <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">${PUSH.on?`<button class="btn alt sm" data-a="pushtest">Deneme bildirimi gönder</button><button class="btn alt sm" data-a="pushoff">Bu cihazda kapat</button>`:`<button class="btn sm" data-a="pushon" ${PUSH.busy?'disabled':''}>${PUSH.busy?'Açılıyor…':'🔔 Bildirim sunucusunu aç'}</button>`}</div>
+      ${PUSH.msg?`<p class="small" style="margin:8px 0 0">${esc(PUSH.msg)}</p>`:''}</div>`
+    :`<div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn alt sm" data-a="remperm">🔔 Bildirimlere izin ver</button><button class="btn alt sm" data-a="remtest">Deneme gönder</button></div>
     <p class="small" style="margin:8px 0 0">${permTxt}</p>
-    <p class="note">Bildirimler uygulama açıkken ya da arka planda canlıyken gelir. Tamamen kapalıyken gönderilemez (anlık bildirim sunucusu yok); uygulamayı açınca Bugün ekranının başında “Bekleyenler” kartı çıkar. iPhone'da bildirim için uygulamayı ana ekrana eklemek gerekir.</p></div>`;
+    <p class="small" style="margin:8px 0 0">${PUSH.msg?esc(PUSH.msg):(location.protocol!=='https:'&&location.hostname!=='localhost'?'Uygulama kapalıyken bildirim için https adresi gerekir; şu an yalnızca uygulama açıkken bildirim gelir.':'Bu tarayıcı anlık bildirimi desteklemiyor; hatırlatmalar yalnızca uygulama açıkken bildirim olarak gelir. iPhone\'da önce uygulamayı ana ekrana ekle (iOS 16.4+).')}</p>`}
+    <p class="note">Saat boşsa hatırlatma kapalıdır. Bildirimler Android'de Chrome, iPhone'da ana ekrana eklenmiş uygulama (iOS 16.4+) ile çalışır; telefonun pil tasarrufu uygulamayı kısıtlıyorsa bildirim gecikebilir. Uygulamayı açınca Bugün ekranının başında “Bekleyenler” kartı da çıkar.</p></div>`;
 }
 function injCard(){
   const L=(S.plan&&S.plan.inj)||[];
@@ -1838,6 +1900,19 @@ function setAccount(){
     <form data-f="delacct" autocomplete="off">${pwField('cp4','Mevcut şifre','current-password','pw')}<button class="btn full" style="margin-top:12px;background:var(--bad);color:#fff">Hesabı kalıcı olarak sil</button></form></div>
   <p class="note">Bu giriş uygulamayı, bu cihazı ya da bağlantıyı kullanan başkalarından ayırır. Verilerin ayrıca Claude hesabına bağlı özel bir alanda tutulur.</p>`;
 }
+function targetInfo(){
+  const p=S.profile,w=curWeight(),tw=num(p.tw);
+  if(!window.ATH||!tw||!w)return '';
+  if(!S.goals.tdee)return `<p class="small" style="margin:8px 0 0">Kalori hedefini görmek için yaş, boy ve kiloyu doldurup “Hedeflerimi hesapla”ya bas.</p>`;
+  const c=ATH.calorieAdjust({weight:w,target:tw,targetDate:p.td||'',today:TODAY,tdee:S.goals.tdee,bmr:S.goals.bmr,goal:p.goal});
+  const fm=x=>String(Math.round(x*100)/100).replace('.',','),fd=x=>parseD(x).toLocaleDateString('tr-TR',{day:'numeric',month:'long',year:'numeric'});
+  if(!c.target)return `<p class="small" style="margin:8px 0 0">Hedef kilona ulaştın (ya da çok yakınsın); kalori hedefin kiloyu koruma/seçili hedefe göre hesaplanır.</p>`;
+  let h=`<div class="small" style="margin-top:10px;line-height:1.55">Günlük kalori: <b class="num">${c.kcal} kcal</b> <span class="mut">(harcama ${S.goals.tdee} ${c.delta<0?'−':'+'} ${Math.abs(c.delta)})</span><br>Haftada yaklaşık <b class="num">${fm(c.rate)} kg</b> ${c.dir==='cut'?'vermen':'almanı'} bekleniyor${c.eta?`; hedefe <b>${esc(fd(c.eta))}</b> civarında varırsın`:''}.</div>`;
+  if(c.capped)h+=`<p class="small" style="margin:8px 0 0;color:var(--bad)">⚠ ${esc(fd(p.td))} tarihine yetişmek haftada ${fm(c.needed)} kg gerektirir; bu güvenli sınırın üstünde. Kaloriyi güvenli hızda tuttum; tarihi uzatmayı düşün.</p>`;
+  if(c.pastDue)h+=`<p class="small" style="margin:8px 0 0;color:var(--bad)">Hedef tarihi geçmiş; yeni bir tarih seç ya da boş bırak.</p>`;
+  if(S.goals.kcal&&Math.abs(S.goals.kcal-c.kcal)>30)h+=`<p class="small mut" style="margin:8px 0 0">Şu anki kalori hedefin ${S.goals.kcal} kcal. Hedef kiloya göre güncellemek için “Hedeflerimi hesapla”ya bas.</p>`;
+  return h;
+}
 function setProfile(){
   const p=S.profile,g=S.goals;
   let h=`<div class="card"><label for="pn">Görünen ad (isteğe bağlı)</label><input id="pn" data-i="prof" data-k="name" value="${esc(p.name||'')}" placeholder="${esc(AUTH.cur.username)}"></div>
@@ -1851,7 +1926,7 @@ function setProfile(){
     ${[['1.2','Masa başı, az hareket'],['1.375','Haftada 1–3 antrenman'],['1.55','Haftada 3–5 antrenman'],['1.725','Haftada 6–7 antrenman']].map(([v,t])=>`<option value="${v}" ${p.act===v?'selected':''}>${t}</option>`).join('')}</select></div>
   <div style="margin-top:10px"><label for="p6">Hedef</label><select id="p6" data-i="prof" data-k="goal"><option value="cut" ${p.goal==='cut'?'selected':''}>Yağ yakmak (kalori açığı)</option><option value="keep" ${p.goal==='keep'?'selected':''}>Kiloyu korumak</option><option value="bulk" ${p.goal==='bulk'?'selected':''}>Kas kazanmak</option></select></div>
   <button class="btn full" style="margin-top:12px" data-a="calc">Hedeflerimi hesapla</button></div>`;
-  h+=`<div class="card"><h3>🎯 Kilo hedefi (isteğe bağlı)</h3><div class="grid2" style="margin-top:8px"><div><label for="ptw">Hedef kilo (kg)</label><input id="ptw" data-i="prof" data-k="tw" inputmode="decimal" value="${esc(p.tw||'')}"></div><div><label for="ptd">Hedef tarih</label><input id="ptd" type="date" data-i="prof" data-k="td" min="${TODAY}" value="${esc(p.td||'')}"></div></div><p class="mut small" style="margin:8px 0 0">Analiz sekmesinde hızın, tahmini varış tarihin ve önerilen kalori ayarın görünür.</p></div>`;
+  h+=`<div class="card"><h3>🎯 Kilo hedefi (isteğe bağlı)</h3><div class="grid2" style="margin-top:8px"><div><label for="ptw">Hedef kilo (kg)</label><input id="ptw" data-i="prof" data-k="tw" inputmode="decimal" value="${esc(p.tw||'')}"></div><div><label for="ptd">Hedef tarih</label><input id="ptd" type="date" data-i="prof" data-k="td" min="${TODAY}" value="${esc(p.td||'')}"></div></div><p class="mut small" style="margin:8px 0 0">Hedef kilo girince günlük kalori hedefin otomatik buna göre hesaplanır.</p>${targetInfo()}</div>`;
   if(g.kcal){
     h+=`<div class="card"><h3>Günlük hedeflerin</h3><p class="mut small" style="margin:4px 0 10px">Hesap sonucu; istersen elle değiştir. Tahmini günlük harcaman: ${g.tdee} kcal (bazal ${g.bmr}).</p><div class="grid2">
       <div><label for="g1">Kalori (kcal)</label><input id="g1" data-i="goal" data-k="kcal" inputmode="numeric" value="${g.kcal}"></div>
@@ -1890,6 +1965,7 @@ function kcalFor(act){
   const p=S.profile,w=num(p.weight),h=num(p.height),a=num(p.age);
   if(!w||!h||!a)return null;
   const bmr=10*w+6.25*h-5*a+(p.sex==='m'?5:-161),tdee=bmr*act;
+  if(window.ATH)return ATH.calorieAdjust({weight:curWeight()||w,target:p.tw,targetDate:p.td,today:TODAY,tdee,bmr,goal:p.goal}).kcal;
   return r0(Math.max(tdee+(p.goal==='cut'?-Math.min(500,tdee*.2):p.goal==='bulk'?300:0),bmr));
 }
 function setHealth(){
@@ -2229,6 +2305,7 @@ const A={
   gtog(ds){V.og[ds.g]=!V.og[ds.g];render()},
   prec(){S.prefs.precise=!S.prefs.precise;persist('core');render()},
   calc(){if(!calcGoals()){alert('Yaş, boy ve kiloyu doldur.');return}render()},
+  applykcal(ds){const k=Math.round(+ds.k),g=S.goals;if(!(k>=1000&&k<=6000))return;g.kcal=k;g.carbs=Math.max(0,r0((k-num(g.protein)*4-num(g.fat)*9)/4));g.auto=false;persist('core');toast('Günlük kalori hedefin '+k+' kcal yapıldı (karbonhidrat buna göre ayarlandı).',true);render()},
   imgdel(ds){const l=V[ds.k],x=l[+ds.ix];if(x){try{URL.revokeObjectURL(x.url)}catch(e){}l.splice(+ds.ix,1)}render()},
   /* yemek */
   async analyze(){
@@ -2471,6 +2548,29 @@ const A={
     try{const p=await Notification.requestPermission();toast(p==='granted'?'Bildirimlere izin verildi.':'Bildirim izni verilmedi; hatırlatmalar yalnızca uygulama içinde görünür.',true)}catch(e){toast(errMsg(e))}
     render();
   },
+  /* bildirim sunucusu */
+  async pushon(){
+    if(PUSH.busy)return;
+    if(!pushOk()){PUSH.msg=location.protocol!=='https:'&&location.hostname!=='localhost'?'Anlık bildirim yalnızca https adresinde çalışır.':'Bu tarayıcı anlık bildirimi desteklemiyor. iPhone\'da önce uygulamayı ana ekrana ekle (Paylaş → Ana Ekrana Ekle, iOS 16.4+) ve oradan aç.';render();return}
+    PUSH.busy=true;PUSH.msg='';render();
+    try{
+      if(await Notification.requestPermission()!=='granted')throw {message:'Bildirim izni verilmedi. Tarayıcı/telefon ayarlarından bu site için bildirimlere izin ver.'};
+      const reg=await navigator.serviceWorker.ready,{key}=await api('/push/key'),kb=b64uBytes(key);
+      let sub=await reg.pushManager.getSubscription();
+      if(sub&&!sameBytes(sub.options&&sub.options.applicationServerKey,kb)){await sub.unsubscribe();sub=null} // sunucu anahtarı değişmişse yeniden abone ol
+      if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:kb});
+      await pushRegister(sub);PUSH.on=true;PUSH.msg='Bildirim sunucusu açık: uygulama kapalıyken de hatırlatma gelir.';
+    }catch(e){PUSH.msg=errMsg(e)}
+    PUSH.busy=false;render();
+  },
+  async pushoff(){
+    try{const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();if(sub){try{await api('/push/unsubscribe',{method:'POST',body:{endpoint:sub.endpoint}})}catch(e){}await sub.unsubscribe()}}catch(e){}
+    PUSH.on=false;PUSH.ep='';PUSH.msg='Bildirim sunucusu bu cihazda kapatıldı.';render();
+  },
+  async pushtest(){
+    try{const r=await api('/push/test',{method:'POST',body:{}});PUSH.msg=r.ok?'Deneme bildirimi gönderildi; birkaç saniye içinde gelmeli.':'Gönderilemedi: push servisi yanıt vermedi.'}catch(e){PUSH.msg=errMsg(e)}
+    render();
+  },
   remtest(){notify('🔔 Deneme bildirimi','Hatırlatmalar böyle görünecek.')},
   csv(ds){const r=csvRows(ds.t);dlFile('spor-hocam-'+({food:'yemekler',lift:'antrenman'}[ds.t]||'gunluk')+'-'+TODAY+'.csv',ATH.toCsv(r.h,r.rows))},
   async photoadd(f,pose){
@@ -2659,9 +2759,17 @@ document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target&&e.target.d
   if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='bc'){e.preventDefault();A.bcsearch();return}
   if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('.hrow')){e.preventDefault();(A[e.target.dataset.a]||A.open)(e.target.dataset)}});
 function jump(v){if(!v||v>TODAY||v===V.date&&V.tab==='today')return;V.date=v;V.tab='today';V.preview=null;V.edit=null;V.undo=null;window.scrollTo(0,0);render()}
+// hedef kilo/tarih değişince kalori hedefini ona göre yeniden hesapla (elle değiştirdiysen dokunmaz)
+function onTargetChange(){
+  const p=S.profile;
+  if(!num(p.weight)||!num(p.height)||!num(p.age)){render();return}
+  if(S.goals.kcal&&S.goals.auto===false){render();toast('Hedefin kaydedildi. Kalori hedefini elle değiştirdiğin için dokunmadım; hedef kiloya göre yenilemek için “Hedeflerimi hesapla”ya bas.',true);return}
+  calcGoals();render();toast('Günlük hedeflerin hedef kiloya göre güncellendi: '+S.goals.kcal+' kcal.',true);
+}
 document.addEventListener('change',e=>{
   const t=e.target,k=t.dataset&&t.dataset.i;if(!k)return;
   if(k==='pickdate'||k==='hdate')jump(t.value);
+  else if(k==='prof'&&(t.dataset.k==='tw'||t.dataset.k==='td'))onTargetChange();
   else if(k==='admdate'){if(t.value&&t.value<=TODAY){V.adm.date=t.value;render()}}
   else if(k==='import'&&t.files&&t.files[0]){importFile(t.files[0]);t.value=''}
   else if(k==='fimg'||k==='simg'){const files=Array.from(t.files||[]),kd=(t.dataset&&t.dataset.kind)||'label';t.value='';addImgs(k==='fimg'?'fimgs':'simgs',files,kd)}
@@ -2683,7 +2791,7 @@ document.addEventListener('input',e=>{
   else if(k==='meas'){const d=getDay(V.date),v=num(t.value);d.meas=d.meas||{};if(t.value.trim()&&v>0&&v<=(ds.k==='yag'?70:300))d.meas[ds.k]=v;else delete d.meas[ds.k];if(!Object.keys(d.meas).length)delete d.meas;save(V.date)}
   else if(k==='rem'){S.prefs.rem=S.prefs.rem||{};if(t.value==='')delete S.prefs.rem[ds.k];else S.prefs.rem[ds.k]=t.value;persist('core');if(ds.k==='weighDay'||ds.k==='water')remTick()}
   else if(k==='rir'){const L=liftOf(V.date),e=L&&L.ex&&L.ex[+ds.e];if(e){if(t.value==='')delete e.rir;else e.rir=Math.max(0,Math.min(4,Math.round(num(t.value))));save(V.date)}}
-  else if(k==='goal'){S.goals[ds.k]=num(t.value);persist('core')}
+  else if(k==='goal'){S.goals[ds.k]=num(t.value);if(ds.k!=='water')S.goals.auto=false;persist('core')}
   else if(k==='weight'){const d=getDay(V.date),v=num(t.value);if(t.value.trim()&&v>=20&&v<=400)d.weight=v;else if(!t.value.trim())delete d.weight;save(V.date)}
   else if(k==='lw'||k==='lr'){ // antrenman seti: durumu doğrudan güncelle, yeniden çizme (odak kaybolmasın)
     const L=liftOf(V.date),s=L&&L.ex&&L.ex[+ds.e]&&(L.ex[+ds.e].s||[])[+ds.j];

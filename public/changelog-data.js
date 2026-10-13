@@ -71,5 +71,17 @@ window.CHANGELOG = [
       ['yeni', 'Sakatlık / ağrı notları: Bugün ekranında uyarı; yapay zekâ koç yorumlarında dikkate alınır.'],
       ['yeni', 'Hatırlatmalar: sabah kontrolü, takviye, tartılma günü, antrenman ve su; yalnızca yapılmamış işler için. Uygulama kapalıyken bildirim gelmez, açınca "Bekleyenler" kartı çıkar.'],
       ['yeni', 'Analiz başında haftalık özet (kalori, protein, antrenman, uyku, hazır oluş, kilo; önceki haftayla fark ve yorum). Ayarlar > Veri\'den Excel/CSV indirme (günlük özet, yemekler, antrenman). Geçmişte 🔋 🏃 📏 rozetleri.']],
+    commits: [['3de1f63', '2026-10-14 00:19', 'Sporcu takibi (v0.13): hazır oluş, RIR/deload, dinlenme sayacı, ölçüler, fotoğraf, kardiyo, protein planı, kilo hedefi, sakatlık, hatırlatma, CSV']] },
+  { v: 'v0.14', d: '2026-10-14 00:35', title: 'Hedef kiloya göre kalori', items: [
+      ['yeni', 'Hedef kilo (ve isteğe bağlı tarih) girince günlük kalori hedefin otomatik buna göre hesaplanır: haftalık hız → günlük açık/fazla. Yön (yağ yak / kas) hedef kilodan belirlenir.'],
+      ['iyi', 'Güvenlik sınırları: verirken en çok %1, alırken en çok %0,5 vücut ağırlığı/hafta; günlük açık en çok %25, fazla en çok %20; kalori bazal metabolizmanın altına inmez. Tarih bu hıza yetişmiyorsa uyarı ve gerçekçi varış tarihi gösterilir.'],
+      ['iyi', 'Profil kartında günlük kalori, haftalık hız ve tahmini varış tarihi anında görünür; Analiz > Kilo hedefi\'nde "günlük hedefimi … kcal yap" düğmesi (formül ya da gerçek harcamana göre).'],
+      ['iyi', 'Kalori hedefini elle değiştirdiysen hedef kilo değişince ona dokunulmaz; "Hedeflerimi hesapla" yeniden hedef kiloya göre hesaplar.']],
+    commits: [['51ef8e3', '2026-10-14 00:32', 'Hedef kiloya göre kalori hesabı (v0.14)']] },
+  { v: 'v0.15', d: '2026-10-14 00:40', title: 'Bildirim sunucusu', items: [
+      ['yeni', 'Uygulama kapalıyken de bildirim: Ayarlar > Tercihler > Hatırlatmalar > "Bildirim sunucusunu aç". Sunucu seçtiğin saatte (sabah kontrolü, takviye, tartılma günü, antrenman, su) ve yalnızca henüz yapmadığın işler için bildirim gönderir.'],
+      ['yeni', 'Güvenli altyapı: yük uçtan uca şifreli (RFC 8291), VAPID imzalı (RFC 8292), ek paket yok. Yalnızca bilinen push servislerine gönderilir; en çok 5 cihaz; çıkışta ve hesap silinince abonelik silinir.'],
+      ['iyi', 'Yaptığın işler bildirimi iptal eder: takviye alındıysa, tartıldıysan, kontrolü doldurduysan, antrenman yaptıysan ya da su yeterliyse bildirim gelmez. Her hatırlatma günde bir kez gönderilir.'],
+      ['iyi', 'Deneme bildirimi düğmesi, bu cihazı kapatma ve bildirime dokununca uygulamayı açma. iPhone için uygulamanın ana ekrana eklenmesi (iOS 16.4+) ve https gerekir.']],
     commits: [] },
 ];

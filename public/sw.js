@@ -1,5 +1,5 @@
 // Spor Hocam servis çalışanı: arayüzü önbelleğe alır (çevrimdışı açılır), API isteklerine dokunmaz.
-const CACHE = 'sh-shell-v27';
+const CACHE = 'sh-shell-v28';
 const SHELL = ['/', '/app.js', '/barcode-util.js', '/drinks-util.js', '/athlete-util.js', '/changelog-data.js', '/style.css', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -25,4 +25,19 @@ self.addEventListener('fetch', e => {
       if (r.ok) { const cp = r.clone(); caches.open(CACHE).then(c => c.put(req, cp)); }
       return r;
     }).catch(() => caches.match(req)));
+});
+
+// Bildirim sunucusu (Web Push): sunucudan gelen hatırlatmayı göster, dokununca uygulamayı aç
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (x) { d = { body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Spor Hocam', {
+    body: d.body || '', icon: '/icon-192.png', badge: '/icon-192.png', tag: d.tag || 'sh', renotify: false, data: { url: '/' } }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
+    for (const c of cs) if ('focus' in c) return c.focus();
+    return self.clients.openWindow('/');
+  }));
 });

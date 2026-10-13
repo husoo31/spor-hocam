@@ -78,6 +78,35 @@
     return out;
   }
 
+  /* ---------- hedef kiloya göre günlük kalori ----------
+     Hedef kilo (ve varsa tarih) → haftalık hız → günlük kalori açığı/fazlası (1 kg ≈ 7700 kcal).
+     Hız güvenli sınırlarda tutulur: verirken en çok %1, alırken en çok %0,5 vücut ağırlığı / hafta; günlük açık en çok TDEE'nin %25'i (ve 1000 kcal),
+     fazla en çok %20'si. Kalori bazal metabolizmanın altına inmez. Hedef yoksa eski davranış: yağ yakma -%20 (en çok 500), kas +300. */
+  function calorieAdjust({ weight, target, targetDate, today, tdee, bmr, goal }) {
+    weight = num(weight); target = num(target); tdee = num(tdee); bmr = num(bmr);
+    const floor = k => Math.round(Math.max(k, bmr));
+    const hasT = weight > 0 && target > 0 && Math.abs(target - weight) >= 0.2;
+    if (!hasT) {
+      const d = goal === 'cut' ? -Math.min(500, tdee * 0.2) : goal === 'bulk' ? 300 : 0;
+      return { target: false, dir: goal || 'keep', delta: Math.round(d), rate: Math.abs(d) * 7 / 7700, kcal: floor(tdee + d) };
+    }
+    const diff = target - weight, loss = diff < 0, remaining = Math.abs(diff);
+    const minRate = weight * (loss ? 0.0025 : 0.0015), maxRate = weight * (loss ? 0.01 : 0.005), mid = weight * (loss ? 0.00625 : 0.00375);
+    let needed;
+    if (targetDate && today && targetDate > today) needed = remaining / ((new Date(targetDate + 'T12:00:00') - new Date(today + 'T12:00:00')) / 864e5 / 7);
+    let rate = needed !== undefined ? clamp(needed, minRate, maxRate) : mid;
+    let delta = rate * 7700 / 7;
+    delta = Math.min(delta, loss ? Math.min(tdee * 0.25, 1000) : tdee * 0.2);
+    let kcal = loss ? tdee - delta : tdee + delta;
+    if (loss && bmr > 0 && kcal < bmr) { kcal = bmr; delta = tdee - bmr; }
+    rate = delta * 7 / 7700;
+    const out = { target: true, dir: loss ? 'cut' : 'bulk', remaining, delta: Math.round(loss ? -delta : delta), rate, kcal: Math.round(kcal), weeks: rate > 0 ? remaining / rate : null };
+    if (out.weeks && today) { const d = new Date(today + 'T12:00:00'); d.setDate(d.getDate() + Math.round(out.weeks * 7)); out.eta = d.toISOString().slice(0, 10); }
+    if (needed !== undefined) { out.needed = needed; out.capped = needed > rate * 1.05; }
+    if (targetDate && today && targetDate <= today) out.pastDue = true;
+    return out;
+  }
+
   /* ---------- protein dağılımı ---------- */
   const PRO_RANGE = { cut: [1.8, 2.4], keep: [1.4, 2.0], bulk: [1.6, 2.2] };
   // meals: [{type, protein}]; trained: bugün antrenman var/yapıldı
@@ -127,5 +156,5 @@
     return [headers, ...rows].map(r => r.map(cell).join(sep)).join('\r\n') + '\r\n';
   }
 
-  return { CHK, readiness, readinessAdvice, deload, weightGoal, proteinPlan, cardioStat, CARDIO, toCsv, PRO_RANGE };
+  return { CHK, readiness, readinessAdvice, deload, weightGoal, calorieAdjust, proteinPlan, cardioStat, CARDIO, toCsv, PRO_RANGE };
 });
