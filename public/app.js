@@ -1653,10 +1653,24 @@ function setPlan(){
   return h;
 }
 function viewSettings(){
-  const tabs=[['account','Hesap'],['profile','Profil'],['plan','Program'],['health','Sağlık'],['prefs','Tercihler'],['data','Veri']];
+  const tabs=[['account','Hesap'],['profile','Profil'],['plan','Program'],['health','Sağlık'],['prefs','Tercihler'],['data','Veri'],['news','Sürümler']];
   if(AUTH.cur&&AUTH.cur.isAdmin)tabs.push(['admin','Yönetim']);
-  const body=V.st==='account'?setAccount():V.st==='prefs'?setPrefs():V.st==='data'?setData():V.st==='health'?setHealth():V.st==='plan'?setPlan():V.st==='admin'?viewAdmin():setProfile();
+  const body=V.st==='account'?setAccount():V.st==='prefs'?setPrefs():V.st==='data'?setData():V.st==='health'?setHealth():V.st==='plan'?setPlan():V.st==='news'?setNews():V.st==='admin'?viewAdmin():setProfile();
   return `<h2 style="margin-top:6px">Ayarlar</h2><div class="seg" style="margin-bottom:12px">${tabs.map(([k,l])=>`<button data-a="sub" data-s="${k}" class="${V.st===k?'on':''}">${l}</button>`).join('')}</div>${body}`;
+}
+
+/* ---------- Sürüm notları (public/changelog-data.js) ---------- */
+const MON_TR=['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
+const KIND_TR={yeni:['✨','Yeni'],iyi:['⚙️','İyileştirme'],fix:['🛠','Düzeltme'],geri:['↩️','Geri alındı']};
+const fmtVer=d=>{const m=/^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})$/.exec(d||'');return m?`${+m[3]} ${MON_TR[+m[2]-1]} ${m[1]} · ${m[4]}`:esc(d||'')};
+function setNews(){
+  const L=(window.CHANGELOG||[]).slice().reverse();
+  if(!L.length)return `<div class="card"><p class="mut small" style="margin:0">Sürüm notu bulunamadı.</p></div>`;
+  return `<div class="card"><div class="row between"><h3>Şu anki sürüm: ${esc(L[0].v)}</h3><span class="mut small">${fmtVer(L[0].d)}</span></div>
+    <p class="mut small" style="margin:6px 0 0">Uygulamaya şimdiye kadar eklenen özellikler ve düzeltilen hatalar. Saatler Türkiye saatidir.</p></div>`
+  +L.map(r=>`<div class="card"><div class="row between"><h3>${esc(r.v)} · ${esc(r.title)}</h3><span class="mut small" style="white-space:nowrap">${fmtVer(r.d)}</span></div>
+    <ul class="small" style="margin:8px 0 0;padding-left:0;list-style:none;line-height:1.5">${r.items.map(([k,t])=>{const kd=KIND_TR[k]||['•',''];return `<li style="margin-top:5px"><span title="${esc(kd[1])}">${kd[0]}</span> ${esc(t)}</li>`}).join('')}</ul>
+    ${r.commits&&r.commits.length?`<details style="margin-top:8px"><summary class="mut small" style="cursor:pointer">Commit'ler (${r.commits.length})</summary>${r.commits.map(c=>`<div class="mut small" style="margin-top:4px"><code>${esc(c[0])}</code> · ${fmtVer(c[1])} · ${esc(c[2])}</div>`).join('')}</details>`:''}</div>`).join('');
 }
 
 /* ---------- Yönetim paneli (yalnızca yöneticiler) ---------- */
