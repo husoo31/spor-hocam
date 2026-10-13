@@ -43,13 +43,36 @@ for (const t of ['1 su bardağı pirinç', 'ayranlı pilav', 'kırmızı monster
 ok(extract('1 kutu kola', ['kola']).items.length === 0, 'kullanıcının kendi kayıtlı ürünü (aynı ad) tabloya göre öncelikli');
 ok(extract('50000 ml kola').items.length === 0, 'olağandışı miktar (50 litre) reddedilir');
 
+// ünlü içecekler
+const one = (t, id, g) => { const x = extract(t); return x.items.length === 1 && x.rest === '' && x.items[0].drink === id && (g === undefined || x.items[0].g === g); };
+ok(one('1 kutu burn', 'burn', 250), '1 kutu Burn = 250 ml');
+ok(one('burn zero', 'burn-zero'), 'Burn Zero şekerli Burn\'den ayrılır');
+ok(one('250 ml beyaz monster enerji içeceği', 'monster-ultra', 250), '"enerji içeceği" sözcüğü marka adını ezmez');
+ok(one('enerji içeceği', 'enerji', 250), 'markasız enerji içeceği genel kalem olur');
+ok(one('1 kutu ayran', 'ayran', 200), '1 kutu ayran = 200 ml');
+ok(one('2 bardak ayran', 'ayran', 400), '2 bardak ayran = 400 ml');
+ok(one('fuse tea', 'icetea', 330), 'FuseTea ice tea olur');
+ok(one('fusetea şeftali', 'icetea'), 'FuseTea şeftali (lezzet adı serbest)');
+ok(one('lipton ice tea zero 330 ml', 'icetea-zero', 330), 'şekersiz ice tea ayrı kalem');
+ok(one('uludağ limonata', 'limonata', 250), 'Uludağ limonata');
+ok(one('uludağ gazoz', 'gazoz', 250), 'Uludağ gazoz');
+ok(one('1 kutu fanta', 'fanta', 330), 'Fanta');
+ok(one('sprite 330 ml', 'sprite', 330), 'Sprite');
+ok(one('cola turka', 'cola', 330), 'Cola Turka kola olur');
+ok(one('1 bardak süt', 'sut', 200), '1 bardak süt = 200 ml');
+ok(one('yarım yağlı süt', 'sut-yarim', 200), 'yarım yağlı süt tam yağlıdan ayrılır');
+ok(one('sade soda', 'soda', 200), 'sade soda');
+ok(one('cappy şeftali', 'meyve-suyu'), 'Cappy şeftali genel meyve suyu olur (güven düşük)');
+ok(extract('limonlu tavuk').items.length === 0 && extract('süt tozu').items.length === 0 && extract('sütlü kahve').items.length === 0, '"limonlu tavuk", "süt tozu", "sütlü kahve" içecek sayılmaz');
+
 // tablo tutarlılığı: kalori ≈ 4P + 4K + 9Y (hesaplanabilen kalem), şeker ≤ karbonhidrat, kimlikler benzersiz
-const ids = new Set(); let bad = [];
+const ids = new Set(), seen = new Map(); let bad = [];
 for (const d of DRINKS) {
   const p = d.per100, comp = 4 * (p.protein || 0) + 4 * (p.carbs || 0) + 9 * (p.fat || 0);
   if (ids.has(d.id)) bad.push(d.id + ' tekrar'); ids.add(d.id);
   if (comp > 20 && Math.abs(p.kcal - comp) / comp > 0.15) bad.push(d.id + ' kcal/makro uyumsuz');
   if ((p.sugar || 0) > (p.carbs || 0)) bad.push(d.id + ' şeker > karbonhidrat');
+  for (const a of d.alias) { const k = m.exports.fold(a); if (seen.has(k) && seen.get(k) !== d.id) bad.push(`"${a}" iki kalemde (${seen.get(k)}, ${d.id})`); seen.set(k, d.id); }
 }
 ok(!bad.length, 'içecek tablosu iç tutarlı' + (bad.length ? ': ' + bad.join(', ') : ''));
 console.log(`\n${pass} geçti, ${fail} başarısız`);
