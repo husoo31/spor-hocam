@@ -42,6 +42,27 @@ ok(g.dir === 'gain' && g.onTrack && g.dailyKcalDelta > 0, 'kilo almada fazlalık
 ok(A.weightGoal({ cur: 80, target: 80.1, today: '2026-10-13' }).reached, 'hedefe ulaşıldı (±0,2 kg)');
 ok(A.weightGoal({ cur: 0, target: 80 }) === null, 'kilo yoksa hesap yok');
 
+// hedef kiloya göre günlük kalori
+const T = { today: '2026-10-14', tdee: 3000, bmr: 1900 };
+let c = A.calorieAdjust({ ...T, weight: 90, target: 96, targetDate: '2026-10-31', goal: 'bulk' });
+ok(c.dir === 'bulk' && c.capped && c.needed > 2.4, 'ekran görüntüsü: 90→96 kg, 17 günde = 2,5 kg/hafta isteniyor → güvenli sınırda kalır (capped)');
+ok(c.delta > 0 && c.delta <= 600 && c.kcal === 3000 + c.delta, 'kalori fazlası %20 TDEE (600 kcal) ile sınırlı: +' + c.delta);
+ok(Math.abs(c.rate - 0.45) < 0.06 && c.weeks > 12 && c.weeks < 16 && /^2027-0[12]/.test(c.eta), 'güvenli hızla ≈ 13 hafta, ETA ' + c.eta);
+c = A.calorieAdjust({ ...T, weight: 90, target: 80, targetDate: '2027-03-01', goal: 'keep' });
+ok(c.dir === 'cut' && !c.capped && c.delta < 0 && c.delta > -700, '90→80 kg, 20 haftada: makul açık ' + c.delta + ' kcal (yön hedeften gelir, seçili hedef "koru" olsa bile)');
+c = A.calorieAdjust({ ...T, weight: 90, target: 80, targetDate: '2026-11-14', goal: 'cut' });
+ok(c.capped && c.delta >= -750 && c.rate <= 0.9 + 1e-9, 'çok kısa tarihte açık güvenli sınırla (≤ %1/hafta ve ≤ %25 TDEE): ' + c.delta);
+c = A.calorieAdjust({ ...T, tdee: 2000, bmr: 1900, weight: 90, target: 80, targetDate: '2026-11-14' });
+ok(c.kcal === 1900, 'kalori bazal metabolizmanın altına inmez');
+c = A.calorieAdjust({ ...T, weight: 90, target: 80, goal: 'cut' });
+ok(Math.abs(c.rate - 0.5625) < 0.01 && c.eta, 'tarih yoksa önerilen orta hız (%0,625/hafta ≈ 0,56 kg)');
+c = A.calorieAdjust({ ...T, weight: 80, target: 80.1, goal: 'cut' });
+ok(!c.target && c.delta === -500, 'hedef kiloya zaten ulaşıldıysa (±0,2 kg) eski hedef seçimine döner');
+c = A.calorieAdjust({ ...T, weight: 80, target: 0, goal: 'bulk' });
+ok(!c.target && c.delta === 300 && c.kcal === 3300, 'hedef kilo yoksa eski davranış (kas +300)');
+c = A.calorieAdjust({ ...T, weight: 70, target: 75, targetDate: '2026-10-10', goal: 'bulk' });
+ok(c.pastDue && c.target, 'geçmiş tarih işaretlenir');
+
 // protein
 let p = A.proteinPlan({ weightKg: 80, goal: 'cut', meals: [{ type: 'Kahvaltı', protein: 30 }, { type: 'Öğle', protein: 45 }, { type: 'Akşam', protein: 50 }, { type: 'Atıştırmalık', protein: 20 }], trained: false });
 ok(Math.abs(p.gkg - 145 / 80) < 1e-9 && p.status === 'ok' && p.spread === 'iyi' && p.strong === 4, 'iyi dağılmış 145 g / 80 kg = 1,81 g/kg → ok');

@@ -71,5 +71,11 @@ window.CHANGELOG = [
       ['yeni', 'Sakatlık / ağrı notları: Bugün ekranında uyarı; yapay zekâ koç yorumlarında dikkate alınır.'],
       ['yeni', 'Hatırlatmalar: sabah kontrolü, takviye, tartılma günü, antrenman ve su; yalnızca yapılmamış işler için. Uygulama kapalıyken bildirim gelmez, açınca "Bekleyenler" kartı çıkar.'],
       ['yeni', 'Analiz başında haftalık özet (kalori, protein, antrenman, uyku, hazır oluş, kilo; önceki haftayla fark ve yorum). Ayarlar > Veri\'den Excel/CSV indirme (günlük özet, yemekler, antrenman). Geçmişte 🔋 🏃 📏 rozetleri.']],
+    commits: [['3de1f63', '2026-10-14 00:19', 'Sporcu takibi (v0.13): hazır oluş, RIR/deload, dinlenme sayacı, ölçüler, fotoğraf, kardiyo, protein planı, kilo hedefi, sakatlık, hatırlatma, CSV']] },
+  { v: 'v0.14', d: '2026-10-14 00:35', title: 'Hedef kiloya göre kalori', items: [
+      ['yeni', 'Hedef kilo (ve isteğe bağlı tarih) girince günlük kalori hedefin otomatik buna göre hesaplanır: haftalık hız → günlük açık/fazla. Yön (yağ yak / kas) hedef kilodan belirlenir.'],
+      ['iyi', 'Güvenlik sınırları: verirken en çok %1, alırken en çok %0,5 vücut ağırlığı/hafta; günlük açık en çok %25, fazla en çok %20; kalori bazal metabolizmanın altına inmez. Tarih bu hıza yetişmiyorsa uyarı ve gerçekçi varış tarihi gösterilir.'],
+      ['iyi', 'Profil kartında günlük kalori, haftalık hız ve tahmini varış tarihi anında görünür; Analiz > Kilo hedefi\'nde "günlük hedefimi … kcal yap" düğmesi (formül ya da gerçek harcamana göre).'],
+      ['iyi', 'Kalori hedefini elle değiştirdiysen hedef kilo değişince ona dokunulmaz; "Hedeflerimi hesapla" yeniden hedef kiloya göre hesaplar.']],
     commits: [] },
 ];
