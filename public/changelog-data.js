@@ -89,5 +89,10 @@ window.CHANGELOG = [
       ['yeni', 'Katalog kurulum aracı (tools/build-catalog.mjs): Open Food Facts toplu verisini (milyonlarca ürün) sunucuda tek komutla indirip hızlı aranabilir hale getirir; varsayılan Türkiye\'de satılan ürünler, --all ile dünya. Eksik ya da tutarsız besin değerli ürünler alınmaz.'],
       ['yeni', 'Restoran menüleri: zincirlerin yayımladığı porsiyon değerlerini CSV olarak (tools/menu-sablonu.csv) ekleyebilirsin; 100 g\'a çevrilir, kalorisi makrolarla uyuşmayan satırlar atlanır.'],
       ['iyi', 'Katalog ayrı bir dosyadır (/data/catalog.db): yedekleri şişirmez, yenilenince sunucu yeniden başlamadan kullanır; yoksa uygulama eskisi gibi çalışır. 600 bin ürün ≈ 9 sn kurulum, 105 MB, arama 2–35 ms.']],
+    commits: [['f65a2f3', '2026-10-14 00:53', 'Ürün kataloğu ve ürün arama (v0.16): Open Food Facts toplu verisi + restoran menüleri']] },
+  { v: 'v0.17', d: '2026-10-14 01:05', title: 'Dinlenme bitince bildirim', items: [
+      ['yeni', 'Set arası dinlenme süresi bitince bildirim: bildirim sunucusu açıksa sunucu süre dolunca telefona anında bildirim gönderir (ekran kilitliyken ve uygulama arka plandayken de), titreşimli.'],
+      ['iyi', '+30 sn eklersen ya da Durdur dersen sunucudaki zamanlayıcı da güncellenir/iptal olur. Uygulama ekranda açıkken çift uyarı olmaması için bildirim gösterilmez (ses ve titreşim zaten çalar).'],
+      ['iyi', 'Bildirim sunucusu kapalıysa: uygulama arka plandayken tarayıcı sayacı çalışıyorsa yerel bildirim gösterilir (telefon sayacı duraklatırsa gecikebilir; en sağlam yol bildirim sunucusunu açmak).']],
     commits: [] },
 ];

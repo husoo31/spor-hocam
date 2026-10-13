@@ -1023,12 +1023,14 @@ function restBeep(){
 }
 function restPaint(){
   const el=restEl(),left=Math.max(0,Math.ceil((restEnd-Date.now())/1000));
-  if(restEnd&&left<=0){clearInterval(restT);restT=null;restEnd=0;restBeep();el.innerHTML=`<span class="grow"><b>⏱ Dinlenme bitti</b> — sıradaki sete!</span><button class="chip" style="margin:0" data-a="reststop">Kapat</button>`;el.style.display='flex';return}
+  if(restEnd&&left<=0){clearInterval(restT);restT=null;restEnd=0;restBeep();if(document.hidden&&!(typeof PUSH!=='undefined'&&PUSH.on))notify('⏱ Dinlenme bitti','Sıradaki sete!');el.innerHTML=`<span class="grow"><b>⏱ Dinlenme bitti</b> — sıradaki sete!</span><button class="chip" style="margin:0" data-a="reststop">Kapat</button>`;el.style.display='flex';return}
   if(!restEnd){el.style.display='none';return}
   el.innerHTML=`<span class="grow">⏱ Dinlenme <b class="num" style="font-size:20px">${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}</b></span><button class="chip" style="margin:0" data-a="restadd">+30 sn</button><button class="chip" style="margin:0" data-a="reststop">Durdur</button>`;
   el.style.display='flex';
 }
-function restStart(sec){restEnd=Date.now()+sec*1000;clearInterval(restT);restT=setInterval(restPaint,500);restPaint()}
+// bildirim sunucusu açıksa süre dolunca sunucu cihaza bildirim gönderir (ekran kilitliyken de); sec=0 iptal eder
+function pushRest(sec){if(typeof PUSH==='undefined'||!PUSH.on||!PUSH.ep)return;api('/push/rest',{method:'POST',body:{endpoint:PUSH.ep,seconds:sec}}).catch(()=>{})}
+function restStart(sec){restEnd=Date.now()+sec*1000;clearInterval(restT);restT=setInterval(restPaint,500);restPaint();pushRest(sec)}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&restEnd)restPaint()});
 const restBar=()=>`<div class="row" style="gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center"><span class="mut small">⏱ Dinlenme:</span>${[[60,'60 sn'],[90,'90 sn'],[120,'2 dk'],[180,'3 dk']].map(([s,l])=>`<button class="chip" style="margin:0" data-a="rest" data-s="${s}">${l}</button>`).join('')}</div>`;
 
@@ -2573,8 +2575,8 @@ const A={
   measopen(){V.measOpen=true;render();setTimeout(()=>{const f=document.getElementById('msbel');if(f)f.focus()},50)},
   measgo(){V.tab='today';V.date=TODAY;V.preview=null;V.measOpen=true;window.scrollTo(0,0);render()},
   rest(ds){restStart(Math.max(10,Math.min(600,+ds.s||90)))},
-  restadd(){restEnd=Math.max(Date.now(),restEnd)+30000;if(!restT)restT=setInterval(restPaint,500);restPaint()},
-  reststop(){restEnd=0;clearInterval(restT);restT=null;restPaint()},
+  restadd(){restEnd=Math.max(Date.now(),restEnd)+30000;if(!restT)restT=setInterval(restPaint,500);restPaint();pushRest(Math.ceil((restEnd-Date.now())/1000))},
+  reststop(){restEnd=0;clearInterval(restT);restT=null;restPaint();pushRest(0)},
   injadd(){
     const a=(document.getElementById('injarea')||{}).value||'Diğer',n=String((document.getElementById('injnote')||{}).value||'').trim().slice(0,80);
     if(!S.plan)S.plan={days:{}};(S.plan.inj=S.plan.inj||[]).unshift({id:'i'+Date.now(),area:a,note:n,since:TODAY,on:true});persist('plan');render();

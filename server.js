@@ -368,6 +368,7 @@ Object.assign(q, {
   pushAll: db.prepare('SELECT * FROM push_subs'),
   pushUser: db.prepare('SELECT * FROM push_subs WHERE user_id=? ORDER BY created'),
   pushByEp: db.prepare('SELECT * FROM push_subs WHERE endpoint=?'),
+  pushById: db.prepare('SELECT * FROM push_subs WHERE id=?'),
   pushIns: db.prepare('INSERT INTO push_subs(id,user_id,endpoint,p256dh,auth,tz,cfg,state,created) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id,p256dh=excluded.p256dh,auth=excluded.auth,tz=excluded.tz,cfg=excluded.cfg,state=excluded.state,fails=0'),
   pushSync: db.prepare('UPDATE push_subs SET cfg=?,state=?,tz=? WHERE id=?'),
   pushDel: db.prepare('DELETE FROM push_subs WHERE id=?'),
@@ -1001,7 +1002,7 @@ function cleanState(s) {
   s = s || {};
   return { date: /^\d{4}-\d{2}-\d{2}$/.test(String(s.date)) ? s.date : '', chk: !!s.chk, suppDone: !!s.suppDone, weigh: !!s.weigh, trainDone: !!s.trainDone, waterMl: Math.min(20000, Math.max(0, Number(s.waterMl) || 0)) };
 }
-const pushTestHits = new Map();
+const pushTestHits = new Map(), restTimers = new Map(), restHits = new Map();
 async function handlePush(req, res, user, p, m) {
   if (p === '/api/push/key' && m === 'GET') return send(res, 200, { key: vapid().publicKey, devices: q.pushUser.all(user.id).length });
   if (p === '/api/push/subscribe' && m === 'POST') {
@@ -1028,6 +1029,25 @@ async function handlePush(req, res, user, p, m) {
     if (row && row.user_id === user.id) { q.pushDel.run(row.id); q.pushLogDelSub.run(row.id); }
     return send(res, 200, { ok: true, devices: q.pushUser.all(user.id).length });
   }
+  // dinlenme zamanlayıcısı: süre dolunca cihaza anında bildirim (ekran kilitliyken tarayıcı sayacı duraklayabilir). seconds=0 iptal eder.
+  if (p === '/api/push/rest' && m === 'POST') {
+    const b = await readBody(req, 2000), row = q.pushByEp.get(String(b.endpoint || ''));
+    if (!row || row.user_id !== user.id) throw new HttpError(404, 'not_found', 'Bu cihaz için bildirim aboneliği yok.');
+    const old = restTimers.get(row.id); if (old) { clearTimeout(old); restTimers.delete(row.id); }
+    const sec = Math.round(Number(b.seconds) || 0);
+    if (sec <= 0) return send(res, 200, { ok: true, scheduled: false });
+    if (sec < 5 || sec > 900) throw new HttpError(400, 'bad_request', 'Süre 5 ile 900 saniye arasında olmalı.');
+    const hits = (restHits.get(user.id) || []).filter(t => t > Date.now() - 3600000);
+    if (hits.length >= 300) throw new HttpError(429, 'rate_limited', 'Çok sık zamanlayıcı kuruldu, biraz sonra tekrar dene.');
+    restHits.set(user.id, [...hits, Date.now()]);
+    const id = row.id, t = setTimeout(async () => {
+      restTimers.delete(id);
+      const cur = q.pushById.get(id); // abonelik bu arada silindiyse gönderme
+      if (cur) await pushSend(cur, { title: '⏱ Dinlenme bitti', body: 'Sıradaki sete!', tag: 'sh-rest' }, { ttl: 120, urgency: 'high' });
+    }, sec * 1000);
+    t.unref(); restTimers.set(id, t);
+    return send(res, 200, { ok: true, scheduled: true, seconds: sec });
+  }
   if (p === '/api/push/test' && m === 'POST') {
     const h = (pushTestHits.get(user.id) || []).filter(t => t > Date.now() - 3600000);
     if (h.length >= 10) throw new HttpError(429, 'rate_limited', 'Saatte en fazla 10 deneme bildirimi gönderebilirsin.');
@@ -1040,8 +1060,8 @@ async function handlePush(req, res, user, p, m) {
   }
   throw new HttpError(404, 'not_found', 'Bulunamadı.');
 }
-async function pushSend(sub, payload) {
-  const r = await sendWebPush(sub, payload, vapid(), { subject: PUSH_SUBJECT, ttl: 3600 });
+async function pushSend(sub, payload, opts = {}) {
+  const r = await sendWebPush(sub, payload, vapid(), { subject: PUSH_SUBJECT, ttl: 3600, ...opts });
   if (r.ok) q.pushOk.run(Date.now(), sub.id);
   else if (r.gone || sub.fails >= 20) { q.pushDel.run(sub.id); q.pushLogDelSub.run(sub.id); }
   else q.pushFail.run(sub.id);

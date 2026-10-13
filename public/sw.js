@@ -31,8 +31,16 @@ self.addEventListener('fetch', e => {
 self.addEventListener('push', e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (x) { d = { body: e.data ? e.data.text() : '' }; }
-  e.waitUntil(self.registration.showNotification(d.title || 'Spor Hocam', {
-    body: d.body || '', icon: '/icon-192.png', badge: '/icon-192.png', tag: d.tag || 'sh', renotify: false, data: { url: '/' } }));
+  e.waitUntil((async () => {
+    // dinlenme bildirimi: uygulama ekranda açıksa zaten sesle/titreşimle uyarıyor; ikinci bir bildirim gösterme
+    if (d.tag === 'sh-rest') {
+      const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      if (cs.some(c => c.visibilityState === 'visible')) return;
+    }
+    await self.registration.showNotification(d.title || 'Spor Hocam', {
+      body: d.body || '', icon: '/icon-192.png', badge: '/icon-192.png', tag: d.tag || 'sh', renotify: d.tag === 'sh-rest',
+      vibrate: d.tag === 'sh-rest' ? [250, 120, 250, 120, 400] : undefined, data: { url: '/' } });
+  })());
 });
 self.addEventListener('notificationclick', e => {
   e.notification.close();

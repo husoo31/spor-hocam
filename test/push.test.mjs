@@ -143,6 +143,21 @@ try {
   // saat dilimi geçersizse varsayılana düşer
   const sz = subscriber('/push/tz'); r = await c('POST', '/api/push/subscribe', { subscription: { endpoint: sz.endpoint, keys: sz.keys }, tz: 'Mars/Olympus', cfg: { rem: {} }, state: stateNone }, A);
   ok(r.s === 200, 'geçersiz saat dilimi hata vermez');
+  // dinlenme zamanlayıcısı: süre dolunca anında bildirim; iptal ve yeniden zamanlama
+  const rx = subscriber('/push/restx'), ry = subscriber('/push/resty'), rz = subscriber('/push/restz');
+  for (const x of [rx, ry, rz]) await c('POST', '/api/push/subscribe', { subscription: { endpoint: x.endpoint, keys: x.keys }, tz: TZ, cfg: { rem: {} }, state: stateNone }, A);
+  const D = { c: '' }; await c('POST', '/api/register', { username: 'Deniz', password: 'deniz-sifre-9876', invite: 'davet-kodu-123', consent: true }, D);
+  ok((await c('POST', '/api/push/rest', { endpoint: rx.endpoint, seconds: 5 }, D)).s === 404, 'dinlenme: başkasının cihazına zamanlayıcı kurulamaz (404)');
+  ok((await c('POST', '/api/push/rest', { endpoint: rx.endpoint, seconds: 2 }, A)).s === 400 && (await c('POST', '/api/push/rest', { endpoint: rx.endpoint, seconds: 5000 }, A)).s === 400, 'dinlenme: 5–900 sn dışı reddedilir');
+  got.length = 0;
+  r = await c('POST', '/api/push/rest', { endpoint: rx.endpoint, seconds: 5 }, A); ok(r.s === 200 && r.j.scheduled, 'dinlenme: 5 sn sonrası için zamanlandı');
+  await c('POST', '/api/push/rest', { endpoint: ry.endpoint, seconds: 5 }, A); r = await c('POST', '/api/push/rest', { endpoint: ry.endpoint, seconds: 0 }, A); ok(r.j.scheduled === false, 'dinlenme: seconds=0 iptal eder');
+  await c('POST', '/api/push/rest', { endpoint: rz.endpoint, seconds: 5 }, A); await c('POST', '/api/push/rest', { endpoint: rz.endpoint, seconds: 900 }, A);
+  await sleep(2500); ok(got.filter(x => x.url.startsWith('/push/rest')).length === 0, 'dinlenme: süre dolmadan bildirim gitmez');
+  await sleep(4000);
+  const rg = got.filter(x => x.url.startsWith('/push/rest'));
+  ok(rg.length === 1 && rg[0].url === '/push/restx', 'dinlenme: yalnızca süresi dolan cihaza gitti; iptal edilen ve ileri alınan gitmedi');
+  const rm = decrypt(rg[0].body, rx); ok(rm.title === '⏱ Dinlenme bitti' && rm.tag === 'sh-rest' && rg[0].headers.ttl === '120' && rg[0].headers.urgency === 'high', 'dinlenme bildirimi: şifreli yük, tag sh-rest, TTL 120, Urgency high');
 } finally {
   S1.srv.kill(); S2.srv.kill(); fake.close();
 }
