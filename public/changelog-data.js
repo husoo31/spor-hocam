@@ -83,5 +83,11 @@ window.CHANGELOG = [
       ['yeni', 'Güvenli altyapı: yük uçtan uca şifreli (RFC 8291), VAPID imzalı (RFC 8292), ek paket yok. Yalnızca bilinen push servislerine gönderilir; en çok 5 cihaz; çıkışta ve hesap silinince abonelik silinir.'],
       ['iyi', 'Yaptığın işler bildirimi iptal eder: takviye alındıysa, tartıldıysan, kontrolü doldurduysan, antrenman yaptıysan ya da su yeterliyse bildirim gelmez. Her hatırlatma günde bir kez gönderilir.'],
       ['iyi', 'Deneme bildirimi düğmesi, bu cihazı kapatma ve bildirime dokununca uygulamayı açma. iPhone için uygulamanın ana ekrana eklenmesi (iOS 16.4+) ve https gerekir.']],
+    commits: [['2ab2494', '2026-10-14 00:41', 'Bildirim sunucusu (Web Push, v0.15): uygulama kapalıyken de hatırlatma']] },
+  { v: 'v0.16', d: '2026-10-14 00:55', title: 'Ürün kataloğu ve ürün arama', items: [
+      ['yeni', 'Bugün > "Ürün ara": marka, ürün ya da restoran adı yaz, sonuçtan ekle; 100 g değerleri, porsiyon kalorisi ve Nutri-Score görünür. Türkçe karakterlerden bağımsız arar ("ulker cikolatali" = "Ülker Çikolatalı"), yazdıkça önek eşleşir.'],
+      ['yeni', 'Katalog kurulum aracı (tools/build-catalog.mjs): Open Food Facts toplu verisini (milyonlarca ürün) sunucuda tek komutla indirip hızlı aranabilir hale getirir; varsayılan Türkiye\'de satılan ürünler, --all ile dünya. Eksik ya da tutarsız besin değerli ürünler alınmaz.'],
+      ['yeni', 'Restoran menüleri: zincirlerin yayımladığı porsiyon değerlerini CSV olarak (tools/menu-sablonu.csv) ekleyebilirsin; 100 g\'a çevrilir, kalorisi makrolarla uyuşmayan satırlar atlanır.'],
+      ['iyi', 'Katalog ayrı bir dosyadır (/data/catalog.db): yedekleri şişirmez, yenilenince sunucu yeniden başlamadan kullanır; yoksa uygulama eskisi gibi çalışır. 600 bin ürün ≈ 9 sn kurulum, 105 MB, arama 2–35 ms.']],
     commits: [] },
 ];

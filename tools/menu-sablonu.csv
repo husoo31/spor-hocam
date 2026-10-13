@@ -1,0 +1,5 @@
+# Restoran menüsü şablonu. Değerler PORSİYON BAŞINADIR (uygulama 100 g'a çevirir). # ile başlayan satırlar yok sayılır.
+# Ayraç ; , ya da sekme olabilir. Dosyayı /data/menus/ klasörüne koy (her restoran için ayrı dosya olabilir), sonra: node tools/build-catalog.mjs --no-off
+# Değerleri restoranın kendi yayımladığı besin değeri tablosundan (resmi site/PDF) al; tahmin yazma. Kalori makrolarla ±%35'ten fazla uyuşmazsa satır atlanır.
+restoran;ürün;porsiyon_g;kcal;protein;karbonhidrat;yağ;şeker;lif;doymuş_yağ;sodyum_mg
+# Örnek satır (başındaki # kalkarsa geçerli olur; sahte değerlerdir, kullanma): Örnek Restoran;Örnek Tavuk Dürüm;250;500;30;50;20;5;3;4;900

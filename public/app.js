@@ -79,7 +79,7 @@ let V={sys:{open:false,busy:false,data:null,err:''},tab:'today',date:TODAY,food:
   coach:'',coachBusy:false,range:14,
   stext:'',sbusy:false,serr:'',spreview:null,snotes:[],sedit:null,sf:{},hm:'',hmore:false,save:'',saveAt:'',
   st:'profile',smsg:null,newCode:null,am:'login',au:'',aerr:'',abusy:false,pending:null,
-  bc:{open:false,code:'',busy:false,err:''},
+  bc:{open:false,code:'',busy:false,err:''},fs:{open:false,q:'',res:null,info:null,err:''},
   adm:{sub:'users',data:null,log:null,uid:null,ud:null,uTab:'day',date:addDays(TODAY,-1),temp:null,newInvite:null},accessLog:null};
 
 /* ---------- depolama: veritabanı (db, parçalı) + cihaz yedeği ---------- */
@@ -633,7 +633,7 @@ Aynı şemayla düzeltilmiş JSON döndür ve "changes" dizisine kısa Türkçe 
 Kullanıcı yazısı: ${txt}
 Asistanın JSON'u: ${JSON.stringify({items})}`;
 }
-const REF_LABELS=['etiket','kullanıcı','USDA','Open Food Facts'];
+const REF_LABELS=['etiket','kullanıcı','USDA','Open Food Facts','restoran menüsü'];
 const MICRO_KEYS=GROUPS.flatMap(g=>g[1]);
 function toPreviewFood(i){
   const g=num(i.g)>0?num(i.g):100,useRef=!!(i.ref&&i.useRef);
@@ -1302,6 +1302,34 @@ function injCard(){
       <button class="chip ${x.on?'on':''}" style="margin:0" data-a="injtog" data-id="${esc(x.id)}">${x.on?'İyileşti':'Tekrar aktif'}</button><button class="ghost" data-a="injdel" data-id="${esc(x.id)}" aria-label="Notu sil">✕</button></div>`).join(''):''}
     <div class="row" style="gap:6px;margin-top:12px;flex-wrap:wrap"><select id="injarea" aria-label="Bölge" style="flex:1;min-width:120px">${INJ_AREAS.map(a=>`<option>${a}</option>`).join('')}</select><input id="injnote" placeholder="not (örn. sağ, squat'ta sızlıyor)" maxlength="80" aria-label="Not" style="flex:2;min-width:140px" autocomplete="off"><button class="btn sm" data-a="injadd" style="min-width:64px">Ekle</button></div></div>`;
 }
+/* ---------- ürün arama: katalog (Open Food Facts toplu verisi + restoran menüleri; sunucuda tools/build-catalog.mjs ile kurulur) ---------- */
+function fsResHtml(){
+  const F=V.fs;
+  if(F.err)return `<p class="small" style="color:var(--bad)">${esc(F.err)}</p>`;
+  if(F.info===false)return `<p class="small mut">Ürün kataloğu bu sunucuda henüz kurulu değil. Yönetici kurulum aracını çalıştırınca milyonlarca ürün ve restoran menüsü burada aranabilir (README → Ürün kataloğu). Şimdilik barkod ve yazıyla hesaplamayı kullanabilirsin.</p>`;
+  if(!F.res)return '';
+  if(!F.res.length)return F.q.trim().length<2?'':`<p class="small mut">“${esc(F.q)}” için sonuç yok. Yazıyla hesaplat ya da barkodu dene.</p>`;
+  return F.res.map((r,i)=>{
+    const p=r.per100,sg=r.servingG,title=r.src==='menu'?`${esc(r.restaurant)} · ${esc(r.name)}`:`${r.brand?esc(r.brand)+' · ':''}${esc(r.name)}`;
+    return `<div class="meal" style="align-items:center"><div class="grow"><div>${title}</div><div class="mut small num">100 g: ${r0(p.kcal)} kcal · P ${f1(p.protein)} · K ${f1(p.carbs)} · Y ${f1(p.fat)}${sg?` · porsiyon ${r0(sg)} g ≈ ${r0(p.kcal*sg/100)} kcal`:''}${r.nutri?` · Nutri-Score ${esc(r.nutri.toUpperCase())}`:''}</div></div><button class="chip on" style="margin:0" data-a="fspick" data-ix="${i}">Ekle</button></div>`;
+  }).join('')+`<p class="note">${F.info&&F.info.total?`Katalog: ${F.info.total.toLocaleString('tr-TR')} ürün. `:''}Open Food Facts topluluk verisidir (ODbL); etiketle karşılaştır. Restoran değerleri zincirin yayımladığı porsiyon bilgisidir.</p>`;
+}
+function fsCard(){
+  if(!V.fs.open)return '';
+  return `<div class="card"><div class="row between"><h3>🔎 Ürün ara</h3><button class="ghost" data-a="fsopen" aria-label="Kapat">✕</button></div><p class="mut small" style="margin:4px 0 8px">Marka, ürün ya da restoran adı yaz (örn. “ülker gofret”, “ayran”, “burger”). Ürünü ekleyince miktarı sen düzeltirsin.</p>
+    <input id="fsq" data-i="fsq" placeholder="Ürün ya da restoran ara…" value="${esc(V.fs.q)}" autocomplete="off" aria-label="Ürün ara"><div id="fsres" style="margin-top:8px">${fsResHtml()}</div></div>`;
+}
+const fsPaint=()=>{const el=document.getElementById('fsres');if(el)el.innerHTML=fsResHtml()};
+let fsT=null,fsReq=0;
+async function fsRun(){
+  const F=V.fs,q=F.q.trim();
+  if(q.length<2&&F.info!==null&&F.info!==undefined){F.res=null;fsPaint();return}
+  const id=++fsReq;
+  try{const r=await api('/foods/search?q='+encodeURIComponent(q)+'&limit=20');if(id!==fsReq)return;F.res=q.length<2?null:r.items;F.info=r.catalog;F.err=''}
+  catch(e){if(id!==fsReq)return;F.err=errMsg(e)}
+  fsPaint();
+}
+
 function sleepCard(d){
   const n=SL[d],isToday=d===TODAY;
   const when=isToday?'dün gece':dmid(addDays(d,-1))+' gecesi';
@@ -1361,7 +1389,7 @@ function viewToday(){
     <p class="mut small" style="margin:4px 0 8px">Doğal yaz: “2 yumurta, 1 dilim tam buğday ekmeği, bir bardak süt”. Gramaj ya da etiket değeri yazarsan aynen kullanırım.</p>
     <textarea data-i="food" placeholder="Yediklerini buraya yaz…">${esc(V.food)}</textarea>
     ${thumbs('fimgs')}
-    <div class="btnrow" style="margin-top:8px">${foodPhotoBtn('meal','🍽 Yemek fotoğrafı')}${foodPhotoBtn('label','🏷 Etiket fotoğrafı')}<button class="btn alt sm" data-a="bcopen">▥ Barkod</button>${precBtn()}</div>
+    <div class="btnrow" style="margin-top:8px">${foodPhotoBtn('meal','🍽 Yemek fotoğrafı')}${foodPhotoBtn('label','🏷 Etiket fotoğrafı')}<button class="btn alt sm" data-a="bcopen">▥ Barkod</button><button class="btn alt sm" data-a="fsopen">🔎 Ürün ara</button>${precBtn()}</div>
     <p class="mut small" style="margin:8px 0 0">En doğru sonuç için: paketli üründe <b>barkodu</b> tara; yemekte fotoğrafı üstten çek, tabağın tamamı ve yanında çatal/kaşık gibi bir ölçü nesnesi görünsün; biliyorsan gramajı yazıya ekle.</p>
     <div class="row" style="margin-top:8px"><select data-i="mealtype" style="width:auto" aria-label="Öğün">${MEAL_TYPES.map(m=>`<option ${m===V.mealType?'selected':''}>${m}</option>`).join('')}</select>
     <button class="btn grow" data-a="analyze" ${V.busy?'disabled':''}>${V.busy?esc(V.busyMsg||'Hesaplıyorum…'):'Kaloriyi hesapla'}</button></div>
@@ -1376,6 +1404,7 @@ function viewToday(){
       <p class="mut small" style="margin:6px 0 0">Kontrol hanesi geçmeyen (yanlış okunmuş) barkodlar otomatik reddedilir.</p>
       ${V.bc.err?`<p class="flag">⚠ ${esc(V.bc.err)}</p>`:''}</div>`;
   }
+  h+=fsCard();
   if(V.preview){
     const tt=V.preview.reduce((a,i)=>{NK.forEach(k=>a[k]=(a[k]||0)+num(i.n[k]));return a},{});
     h+=`<div class="card" style="border-color:var(--pro)"><h3>Şunları buldum</h3><p class="small mut" style="margin:2px 0 0">Miktarı (g/ml) düzeltirsen değerler otomatik güncellenir.</p>${V.preview.map((i,ix)=>`<div class="pv">
@@ -2523,6 +2552,15 @@ const A={
   plandel(ds){const p=planDays()[ds.w];if(!p||!p.ex)return;p.ex.splice(+ds.x,1);persist('plan');render()},
   planup(ds){const p=planDays()[ds.w],x=+ds.x;if(!p||!p.ex||x<1)return;[p.ex[x-1],p.ex[x]]=[p.ex[x],p.ex[x-1]];persist('plan');render()},
   wundo(){const d=getDay(V.date);if(d.water&&d.water.length){d.water.pop();save(V.date);render()}},
+  /* ürün arama */
+  fsopen(){V.fs.open=!V.fs.open;V.fs.err='';render();if(V.fs.open)setTimeout(()=>{const f=document.getElementById('fsq');if(f)f.focus();fsRun()},50)},
+  fspick(ds){
+    const r=V.fs.res&&V.fs.res[+ds.ix];if(!r)return;
+    const menu=r.src==='menu',item=toPreviewFood({name:menu?r.restaurant+' · '+r.name:(r.brand?r.brand+' ':'')+r.name,qty:r.servingG?`1 porsiyon (${r0(r.servingG)} g)`:'100 g',g:r.servingG||100,conf:'orta',
+      basis:menu?'restoran menüsü':'Open Food Facts',per100:r.per100,note:menu?'Restoranın yayımladığı porsiyon değeri; farklı porsiyon yediysen miktarı düzelt.':'Open Food Facts topluluk verisi; paketteki etikete göre kontrol et.'});
+    V.preview=[...(V.preview||[]),item];V.pnotes=V.pnotes||[];render();
+    setTimeout(()=>{const l=document.querySelectorAll('.pv'),pv=l[l.length-1];if(pv)pv.scrollIntoView({block:'center'})},60);
+  },
   /* sporcu takibi */
   chk(ds){const d=getDay(V.date);d.chk=d.chk||{};if(+d.chk[ds.k]===+ds.v)delete d.chk[ds.k];else d.chk[ds.k]=+ds.v;if(!Object.keys(d.chk).length)delete d.chk;V.chkOpen=true;save(V.date);render()},
   chkopen(){V.chkOpen=!V.chkOpen;render()},
@@ -2781,6 +2819,7 @@ document.addEventListener('input',e=>{
   const t=e.target,k=t.dataset&&t.dataset.i;if(!k)return;const ds=t.dataset;
   if(k==='food')V.food=t.value;
   else if(k==='mealtype')V.mealType=t.value;
+  else if(k==='fsq'){V.fs.q=t.value;clearTimeout(fsT);fsT=setTimeout(fsRun,300)}
   else if(k==='stext')V.stext=t.value;
   else if(k==='bc')V.bc.code=t.value;
   else if(k==='pickdate'||k==='hdate')jump(t.value);
