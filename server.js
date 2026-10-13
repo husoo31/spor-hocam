@@ -12,6 +12,7 @@ import { createLocalFoods } from './localfoods.js';
 import { parseSegments, buildNights, mergeNights } from './sleep.js';
 import { generateVapid, sendWebPush, endpointAllowed, fromB64u } from './webpush.js';
 import { dueReminders, validTz } from './pushrules.js';
+import { openCatalog, catalogInfo, searchCatalog } from './catalog.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const env = process.env;
@@ -961,6 +962,19 @@ function readSleep(userId) {
 function writeSleep(userId, s) { q.putDoc.run(userId, SLEEP_DOC, JSON.stringify({ days: s.days, last: s.last, info: s.info }), Date.now()); }
 function genSyncKey() { return 'sh_' + rnd(24).toString('base64url'); }
 
+/* ------------------------------------------------------------------ ürün kataloğu (Open Food Facts toplu verisi + restoran menüleri)
+   DATA_DIR/catalog.db varsa "Ürün ara" onu kullanır; tools/build-catalog.mjs ile kurulur/yenilenir. Dosya değişince (mtime) yeniden açılır, yeniden başlatma gerekmez. */
+const CATALOG_FILE = path.join(DATA_DIR, 'catalog.db');
+const cat = { db: null, mtime: 0 };
+function catalogDb() {
+  let st; try { st = fs.statSync(CATALOG_FILE); } catch (e) { if (cat.db) { try { cat.db.close(); } catch (x) { /* kapalı */ } cat.db = null; } return null; }
+  if (!cat.db || st.mtimeMs !== cat.mtime) {
+    try { if (cat.db) cat.db.close(); } catch (e) { /* kapalı */ }
+    try { cat.db = openCatalog(CATALOG_FILE); cat.mtime = st.mtimeMs; } catch (e) { cat.db = null; console.error('[katalog] açılamadı:', e.message); }
+  }
+  return cat.db;
+}
+
 /* ------------------------------------------------------------------ bildirim sunucusu (Web Push)
    İstemci aboneliğini ve hatırlatma ayarını/bugünkü durumunu gönderir; sunucu her dakika kuralları (pushrules.js) değerlendirip yalnızca
    yapılmamış işler için, belirlenen saatte bildirim yollar. Uygulama kapalıyken de çalışır. Yük şifreli (RFC 8291), imzalı (VAPID). */
@@ -1222,6 +1236,14 @@ async function handleApi(req, res, url) {
   }
 
   if (p.startsWith('/api/push/')) return handlePush(req, res, user, p, m);
+  if (p === '/api/foods/search' && m === 'GET') {
+    lookupLimit(user.id, 200);
+    const db = catalogDb();
+    if (!db) return send(res, 200, { items: [], catalog: false });
+    const qs = String(url.searchParams.get('q') || '').slice(0, 80);
+    let items = []; try { items = qs.trim().length >= 2 ? searchCatalog(db, qs, Number(url.searchParams.get('limit')) || 20) : []; } catch (e) { console.error('[katalog] arama hatası:', e.message); }
+    return send(res, 200, { items, catalog: catalogInfo(db) });
+  }
   if (p === '/api/status' && m === 'GET') return handleStatus(req, res);
   if (p === '/api/offline-estimate' && m === 'POST') {
     const b = await readBody(req, 20000);

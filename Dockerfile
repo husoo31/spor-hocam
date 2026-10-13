@@ -4,8 +4,9 @@ ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/data
 WORKDIR /app
-COPY package.json server.js refdb.js localfoods.js sleep.js webpush.js pushrules.js ./
+COPY package.json server.js refdb.js localfoods.js sleep.js webpush.js pushrules.js catalog.js ./
 COPY localdata ./localdata
+COPY tools ./tools
 COPY public ./public
 RUN mkdir -p /data
 EXPOSE 3000

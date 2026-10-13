@@ -184,3 +184,18 @@ Ayarlar → Tercihler → Hatırlatmalar → **Bildirim sunucusunu aç** ile tel
 - **Güvenlik:** Sunucu yalnızca bilinen tarayıcı push servislerine (FCM, Mozilla, Apple, Windows) istek atar; kullanıcının verdiği başka bir adrese (örn. iç ağ) göndermez. Kullanıcı başına en çok 5 cihaz tutulur; çıkış yapınca ve hesap silinince abonelikler silinir. Geçersiz abonelikler (404/410) otomatik temizlenir.
 - **Sorun giderme:** "Deneme bildirimi gönder" düğmesi sunucudan cihaza tam yolu sınar. Gelmiyorsa tarayıcı/telefon ayarlarından bu site için bildirim iznini ve pil tasarrufunu kontrol et.
 
+## Ürün kataloğu (milyonlarca ürün + restoran menüleri)
+Bugün ekranındaki **🔎 Ürün ara**, `DATA_DIR/catalog.db` dosyasını arar (SQLite FTS5, Türkçe karakterlerden bağımsız). Katalog repoda **yoktur**; sunucuda kurulur ve yenilenir. Dosya yoksa uygulama eskisi gibi çalışır (barkod + yazıyla hesaplama).
+
+**Kurulum** (Coolify → uygulama → *Terminal*, internet gerekir):
+```
+node tools/build-catalog.mjs            # Türkiye'de satılan ürünler (varsayılan) + /data/menus içindeki restoran CSV'leri
+node tools/build-catalog.mjs --all      # dünyadaki tüm ürünler (milyonlarca)
+node tools/build-catalog.mjs --countries turkey,germany,united-kingdom
+node tools/build-catalog.mjs --menus /data/menus --no-off    # yalnızca restoran menüleri
+```
+- **Boyut/süre:** Open Food Facts CSV'si ≈ 1 GB indirme. Ölçümümüz: 600 bin ürün ≈ 9 sn ve 105 MB (gerçek dosyada sütun sayısı çok olduğundan birkaç dakika sürer; `--all` için `/data` volume'unda birkaç GB boş yer bırak). Yenilemek için komutu tekrar çalıştır (örn. ayda bir); sunucu yeni dosyayı yeniden başlamadan kullanır.
+- **Neler alınır:** Kalori, protein, karbonhidrat ve yağın dördü de olan, akla uygun (makrolar 100 g'ı aşmayan) ürünler. Şekeri karbonhidrattan fazla olan satırlarda yalnızca şeker alanı atılır.
+- **Restoran menüleri:** Açık bir restoran veri kümesi yoktur; zincirlerin **kendi yayımladığı** besin değeri tablolarını CSV'ye aktarırsın. `tools/menu-sablonu.csv` şablonunu `/data/menus/` içine (her restoran ayrı dosya olabilir) kopyalayıp doldur, sonra `node tools/build-catalog.mjs --no-off` (ya da yukarıdakilerden biri). Değerler porsiyon başınadır; tahmin yazma. Kalorisi makrolarla ±%35'ten fazla uyuşmayan satırlar atlanır ve araç kaç satırın atlandığını yazar.
+- **Lisans:** Open Food Facts verisi ODbL lisanslıdır (topluluk verisi; kaynak olarak belirtilir, değerler etiketle karşılaştırılmalıdır). Türetilmiş veritabanını başkalarına dağıtırsan aynı lisansla paylaşmalısın; yalnızca kendi sunucunda kullanmak serbesttir.
+
