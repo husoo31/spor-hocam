@@ -604,6 +604,7 @@ Kurallar:
 6. İç tutarlılık: kcal ≈ 4×protein + 4×karbonhidrat + 9×yağ (±%10); sat+mono+poly ≤ fat; sugar ≤ carbs; fiber ≤ carbs.
 7. conf: "yüksek" (kullanıcının rakamı, etiket ya da çok bilinen standart besin), "orta", "düşük" (belirsiz ürün veya porsiyon). basis: "kullanıcı", "etiket", "veri tabanı" ya da "tahmin".
 8. "search": USDA FoodData Central'da aranacak İngilizce, GENEL (markasız) besin adı; pişirme halini ekle (örn. "chicken breast cooked roasted", "rice white cooked", "egg whole boiled", "olive oil", "lentils cooked boiled"). Türk yemekleri ve karışık yemekler (menemen, mantı, lahmacun, çorba, börek vb.) ya da markalı ürünler için null yaz. "brand": markalı paketli ürünse marka ve ürün adı (örn. "Ülker Çikolatalı Gofret"), değilse null. "barcode": kullanıcı barkod numarası yazdıysa rakamları, yoksa null.
+9. İçeceklerde (enerji içeceği, kola, gazoz, meyve suyu, süt, ayran, kahve, çay vb.) değerler 100 ml başınadır ve "g" alanına yazılan hacmi ml olarak aynen yaz (250 ml → 250; 1 kutu → kutu boyu, örn. 330/500; 1 su bardağı → 200). Markanın çeşidini ayırt et: şekerli ile şekersiz/zero/light/ultra aynı değildir (şekersiz içecek ≈ 0-5 kcal/100 ml; şekerli kola/enerji içeceği ≈ 40-47 kcal/100 ml). Enerji içeceğinde kafein miktarını note'a yaz.
 ${verTxt}${imgTxt}${mealTxt}
 Anahtarlar ve birimler: ${KEYDOC}.
 Sadece JSON döndür: {"items":[{"name":"kısa Türkçe ad","qty":"yazılan porsiyon","g":0,"conf":"orta","basis":"veri tabanı","note":"varsa kısa uyarı","gLow":0,"gHigh":0,"search":"chicken breast cooked roasted","brand":null,"barcode":null,"per100":{"kcal":0,"protein":0}}]} (per100 içinde yukarıdaki tüm anahtarlar bulunmalı).
@@ -1902,9 +1903,13 @@ const A={
   imgdel(ds){const l=V[ds.k],x=l[+ds.ix];if(x){try{URL.revokeObjectURL(x.url)}catch(e){}l.splice(+ds.ix,1)}render()},
   /* yemek */
   async analyze(){
-    const txt=V.food.trim(),imgs=V.fimgs.map(x=>x.blob);
+    const imgs=V.fimgs.map(x=>x.blob);
     const labelImgs=V.fimgs.filter(x=>x.kind!=='meal').map(x=>x.blob),mealImgs=V.fimgs.filter(x=>x.kind==='meal').map(x=>x.blob);
-    if((!txt&&!imgs.length)||V.busy)return;
+    // bilinen içecekler ("250 ml beyaz monster", "1 kutu kola") tablodan hesaplanır; yapay zekâya yalnızca kalan metin gider
+    const dr=window.DRK?DRK.extract(V.food.trim(),S.lib.map(x=>x.name)):{items:[],rest:V.food.trim()};
+    const txt=dr.rest,drinks=dr.items.map(toPreviewFood);
+    if((!txt&&!imgs.length&&!drinks.length)||V.busy)return;
+    if(!txt&&!imgs.length){V.err='';V.preview=drinks;V.pnotes=[];render();return}
     V.busy=true;V.err='';V.busyMsg='Hesaplanıyor…';render();
     try{
       // Görselli işlerde (özellikle yemek fotoğrafı) en güçlü model zinciri kullanılır
@@ -1939,11 +1944,12 @@ const A={
           }else notes.push('Doğrulama farklı sayıda kalem döndürdü; ilk hesap korundu.');
         }catch(e){notes.push('Doğrulama adımı tamamlanamadı; ilk hesap gösteriliyor.')}
       }
-      V.preview=items.map(toPreviewFood);V.pnotes=notes;
+      V.preview=[...items.map(toPreviewFood),...drinks];V.pnotes=notes;
     }catch(e){
       // Yapay zekâ çalışmıyorsa: yazılan metni yerel besin tablosundan (USDA kopyası) yaklaşık hesapla
       const fb=await offlineFallback(txt,e,imgs.length);
-      if(fb){V.preview=fb.items.map(toPreviewFood);V.pnotes=fb.notes;V.err=''}
+      if(fb){V.preview=[...fb.items.map(toPreviewFood),...drinks];V.pnotes=fb.notes;V.err=''}
+      else if(drinks.length){V.preview=drinks;V.pnotes=['İçecekler hesaplandı; yazdığın diğer yiyecekler hesaplanamadı ('+(V.err||errMsg(e))+'). Onları tekrar dene ya da elle ekle.'];V.err=''}
       else V.err=V.err||errMsg(e);
     }
     V.busy=false;render();
