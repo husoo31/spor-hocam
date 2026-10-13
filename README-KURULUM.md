@@ -173,3 +173,14 @@ Gerçek bir iPhone/Android cihazda denemedim; ilk kullanımda bir yerde sorun g�
 
 ## Sürüm notları
 Uygulamada **Ayarlar → Sürümler** sekmesi `public/changelog-data.js` dosyasından okur. Her güncellemede dosyanın sonuna yeni sürümü (v0.N) ekle: tarih-saat (Türkiye saati), yeni özellikler/düzeltmeler ve commit'ler. `node test/changelog.test.mjs` hash ve saatleri git geçmişiyle karşılaştırır.
+
+## Bildirim sunucusu (Web Push)
+Ayarlar → Tercihler → Hatırlatmalar → **Bildirim sunucusunu aç** ile telefon/bilgisayar bildirim için kaydolur. Sunucu her dakika hatırlatma kurallarına (sabah kontrolü, takviye, tartılma günü, antrenman, su) bakar ve **uygulama kapalıyken de**, yalnızca henüz yapılmamış işler için, belirlenen saatten sonraki 20 dakika içinde bildirim gönderir. Yük uçtan uca şifrelidir (RFC 8291) ve VAPID ile imzalıdır (RFC 8292); ek paket gerekmez.
+
+- **https şart:** Tarayıcılar anlık bildirimi yalnızca https adresinde (ya da localhost) açar. Coolify'da alan adına SSL ver.
+- **iPhone:** iOS 16.4+ ve uygulama **ana ekrana eklenmiş** olmalı (Safari → Paylaş → Ana Ekrana Ekle), ayarı oradan aç.
+- **Anahtarlar:** VAPID anahtar çifti ilk açılışta üretilir ve veritabanında (`settings`) saklanır; `/data` volume'unda kalır. Veritabanı silinirse kullanıcılar bildirimi yeniden açmalıdır.
+- **Ortam değişkenleri (hepsi isteğe bağlı):** `VAPID_SUBJECT` (örn. `mailto:sen@alanadin.com`; Apple geçerli bir mailto/https ister, varsayılan `PUBLIC_URL` ya da bir mailto), `PUBLIC_URL` (https adresin), `PUSH_DISABLED=true` (bildirimleri kapatır), `PUSH_TICK_MS` (kontrol aralığı, varsayılan 60000).
+- **Güvenlik:** Sunucu yalnızca bilinen tarayıcı push servislerine (FCM, Mozilla, Apple, Windows) istek atar; kullanıcının verdiği başka bir adrese (örn. iç ağ) göndermez. Kullanıcı başına en çok 5 cihaz tutulur; çıkış yapınca ve hesap silinince abonelikler silinir. Geçersiz abonelikler (404/410) otomatik temizlenir.
+- **Sorun giderme:** "Deneme bildirimi gönder" düğmesi sunucudan cihaza tam yolu sınar. Gelmiyorsa tarayıcı/telefon ayarlarından bu site için bildirim iznini ve pil tasarrufunu kontrol et.
+

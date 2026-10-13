@@ -192,6 +192,7 @@ function persist(key){
   if(!AUTH.cur)return;
   try{
     dirty.add(key);mirror();storeDirty();
+    if(window.pushSyncSoon)pushSyncSoon(); // bildirim sunucusu açıksa hatırlatma ayarı/bugünkü durum eşitlenir
     if(col&&!dbErr){setStatus('saving');clearTimeout(pt);pt=setTimeout(flush,500)}
   }catch(e){console.error(e)}
 }
@@ -332,10 +333,13 @@ async function enterApp(user){
   await load();
   await loadBurn();
   applyTheme();
+  setTimeout(pushInit,1500);
   Object.assign(V,{tab:S.goals.kcal?'today':'settings',st:'profile',date:TODAY,preview:null,pnotes:[],food:'',err:'',edit:null,undo:null,fimgs:[],simgs:[],spreview:null,sedit:null,coach:'',smsg:null,newCode:null,pending:null,aerr:''});
 }
 async function leaveApp(){
   clearTimeout(pt);try{await flush()}catch(e){}
+  try{if(PUSH.on&&PUSH.ep){await api('/push/unsubscribe',{method:'POST',body:{endpoint:PUSH.ep}});const r=await navigator.serviceWorker.ready,sb=await r.pushManager.getSubscription();if(sb)await sb.unsubscribe()}}catch(e){} // çıkış yapınca bu cihaza bildirim gelmesin
+  PUSH.on=false;PUSH.ep='';
   try{await api('/logout',{method:'POST'})}catch(e){}
   try{localStorage.removeItem('spor-hocam-last')}catch(e){}
   AUTH.cur=null;col=null;dirty.clear();S=defaultS();applyTheme();
@@ -1051,6 +1055,7 @@ async function notify(title,body){
   toast(title+' — '+body,true);return false;
 }
 function remTick(){
+  if(typeof PUSH!=='undefined'&&PUSH.on)return; // bildirim sunucusu açıksa bildirimi o gönderir (çift bildirim olmasın)
   const R=remCfg();if(!R||!Object.keys(R).length)return;
   const seen={};
   remDue(new Date()).forEach(it=>{if(!it.fresh||remFired(it.key)||seen[it.id])return;seen[it.id]=1;remMark(it.key);notify(it.title,it.body)});
@@ -1062,6 +1067,44 @@ function remBanner(d){
   return `<div class="card" style="border-color:var(--carb)"><div class="small"><b>⏰ Bekleyenler</b></div>${list.map(x=>`<div class="small" style="margin-top:4px">${esc(x.title)} <span class="mut">— ${esc(x.body)}</span></div>`).join('')}</div>`;
 }
 setInterval(()=>{try{remTick()}catch(e){}},30000);
+/* ---------- bildirim sunucusu (Web Push): uygulama kapalıyken de hatırlatma ----------
+   Cihaz aboneliği + hatırlatma ayarı + bugünkü durum sunucuya eşitlenir; sunucu saati gelince yalnızca yapılmamış işler için bildirim yollar (server.js, pushrules.js). */
+const PUSH={on:false,busy:false,msg:'',ep:'',last:''};
+const pushOk=()=>!!(window.PushManager&&window.Notification&&navigator.serviceWorker)&&(location.protocol==='https:'||location.hostname==='localhost');
+const b64uBytes=s=>{const b=atob((s+'='.repeat((4-s.length%4)%4)).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(b,c=>c.charCodeAt(0))};
+const sameBytes=(a,b)=>a&&b&&a.byteLength===b.byteLength&&new Uint8Array(a).every((v,i)=>v===b[i]);
+function pushCfg(){
+  const days=planActive()?WD_ORDER.filter(w=>{const p=(S.plan.days||{})[w];return p&&p.t==='train'&&(p.ex||[]).length}):[];
+  return {rem:{...remCfg()},trainDays:days,hasSupps:S.supps.length>0,waterGoal:waterGoal()};
+}
+function pushState(){
+  const x=getDayRO(TODAY);
+  return {date:TODAY,chk:Object.keys(x.chk||{}).length>0,suppDone:S.supps.length>0&&Object.keys(x.sup||{}).length>=S.supps.length,weigh:!!x.weight,trainDone:liftHas(x.lift),waterMl:waterSum(TODAY)};
+}
+const pushTz=()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone}catch(e){return 'Europe/Istanbul'}};
+let pushT=null;
+function pushSyncSoon(){if(!PUSH.on)return;clearTimeout(pushT);pushT=setTimeout(pushSync,3000)}
+async function pushSync(){
+  if(!PUSH.on||!PUSH.ep||!AUTH.cur)return;
+  const body={endpoint:PUSH.ep,tz:pushTz(),cfg:pushCfg(),state:pushState()},j=JSON.stringify(body);
+  if(j===PUSH.last)return;PUSH.last=j;
+  try{await api('/push/sync',{method:'POST',body})}catch(e){PUSH.last=''}
+}
+async function pushRegister(sub){
+  const j=sub.toJSON();
+  await api('/push/subscribe',{method:'POST',body:{subscription:{endpoint:j.endpoint,keys:j.keys},tz:pushTz(),cfg:pushCfg(),state:pushState()}});
+  PUSH.ep=j.endpoint;PUSH.last='';
+}
+// giriş sonrası: bu cihazda abonelik varsa sunucuya yeniden bildir (adres değişmiş olabilir) ve eşitlemeyi aç
+async function pushInit(){
+  PUSH.on=false;PUSH.ep='';PUSH.last='';
+  if(!pushOk()||!AUTH.cur||AUTH.offline)return;
+  try{
+    const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();
+    if(sub&&Notification.permission==='granted'){await pushRegister(sub);PUSH.on=true;render()}
+  }catch(e){}
+}
+
 
 /* ---------- sporcu takibi: Analiz kartları ---------- */
 const liftDone=L=>!!L&&(L.ex||[]).some(e=>(e.s||[]).some(x=>num(x.r)>0));
@@ -1242,9 +1285,15 @@ function remCard(){
     ${REM_DEF.map(([k,l])=>k==='water'
       ?`<div class="row between" style="margin-top:10px"><label for="rm${k}" style="margin:0">${l}</label><select id="rm${k}" data-i="rem" data-k="water" style="width:auto"><option value="">Kapalı</option>${[1,2,3].map(h=>`<option value="${h}" ${+R.water===h?'selected':''}>Her ${h} saatte (09–21)</option>`).join('')}</select></div>`
       :`<div class="row between" style="margin-top:10px"><label for="rm${k}" style="margin:0">${l}</label><input id="rm${k}" type="time" data-i="rem" data-k="${k}" value="${esc(R[k]||'')}" style="width:auto"></div>${k==='weigh'?`<div class="row between" style="margin-top:6px"><label for="rmwd" style="margin:0">Tartılma günü</label><select id="rmwd" data-i="rem" data-k="weighDay" style="width:auto"><option value="">Seç</option>${[1,2,3,4,5,6,0].map(w=>`<option value="${w}" ${R.weighDay!==undefined&&R.weighDay!==''&&+R.weighDay===w?'selected':''}>${WD_NAME[w]}</option>`).join('')}</select></div>`:''}`).join('')}
-    <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn alt sm" data-a="remperm">🔔 Bildirimlere izin ver</button><button class="btn alt sm" data-a="remtest">Deneme gönder</button></div>
+    ${pushOk()?`<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><div><b>🔔 Bildirim sunucusu</b> <span class="small mut">· uygulama kapalıyken de</span></div>
+      <p class="small mut" style="margin:6px 0 0">Sunucu, seçtiğin saatte ve yalnızca henüz yapmadığın işler için bu cihaza bildirim gönderir.</p>
+      <p class="small" style="margin:8px 0 0">${PUSH.on?'✅ Bu cihazda açık.':'Bu cihazda kapalı.'}</p>
+      <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">${PUSH.on?`<button class="btn alt sm" data-a="pushtest">Deneme bildirimi gönder</button><button class="btn alt sm" data-a="pushoff">Bu cihazda kapat</button>`:`<button class="btn sm" data-a="pushon" ${PUSH.busy?'disabled':''}>${PUSH.busy?'Açılıyor…':'🔔 Bildirim sunucusunu aç'}</button>`}</div>
+      ${PUSH.msg?`<p class="small" style="margin:8px 0 0">${esc(PUSH.msg)}</p>`:''}</div>`
+    :`<div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn alt sm" data-a="remperm">🔔 Bildirimlere izin ver</button><button class="btn alt sm" data-a="remtest">Deneme gönder</button></div>
     <p class="small" style="margin:8px 0 0">${permTxt}</p>
-    <p class="note">Bildirimler uygulama açıkken ya da arka planda canlıyken gelir. Tamamen kapalıyken gönderilemez (anlık bildirim sunucusu yok); uygulamayı açınca Bugün ekranının başında “Bekleyenler” kartı çıkar. iPhone'da bildirim için uygulamayı ana ekrana eklemek gerekir.</p></div>`;
+    <p class="small" style="margin:8px 0 0">${PUSH.msg?esc(PUSH.msg):(location.protocol!=='https:'&&location.hostname!=='localhost'?'Uygulama kapalıyken bildirim için https adresi gerekir; şu an yalnızca uygulama açıkken bildirim gelir.':'Bu tarayıcı anlık bildirimi desteklemiyor; hatırlatmalar yalnızca uygulama açıkken bildirim olarak gelir. iPhone\'da önce uygulamayı ana ekrana ekle (iOS 16.4+).')}</p>`}
+    <p class="note">Saat boşsa hatırlatma kapalıdır. Bildirimler Android'de Chrome, iPhone'da ana ekrana eklenmiş uygulama (iOS 16.4+) ile çalışır; telefonun pil tasarrufu uygulamayı kısıtlıyorsa bildirim gecikebilir. Uygulamayı açınca Bugün ekranının başında “Bekleyenler” kartı da çıkar.</p></div>`;
 }
 function injCard(){
   const L=(S.plan&&S.plan.inj)||[];
@@ -2497,6 +2546,29 @@ const A={
   async remperm(){
     if(!window.Notification){toast('Bu tarayıcı bildirim göstermiyor; hatırlatmalar uygulama içinde görünür.',true);return}
     try{const p=await Notification.requestPermission();toast(p==='granted'?'Bildirimlere izin verildi.':'Bildirim izni verilmedi; hatırlatmalar yalnızca uygulama içinde görünür.',true)}catch(e){toast(errMsg(e))}
+    render();
+  },
+  /* bildirim sunucusu */
+  async pushon(){
+    if(PUSH.busy)return;
+    if(!pushOk()){PUSH.msg=location.protocol!=='https:'&&location.hostname!=='localhost'?'Anlık bildirim yalnızca https adresinde çalışır.':'Bu tarayıcı anlık bildirimi desteklemiyor. iPhone\'da önce uygulamayı ana ekrana ekle (Paylaş → Ana Ekrana Ekle, iOS 16.4+) ve oradan aç.';render();return}
+    PUSH.busy=true;PUSH.msg='';render();
+    try{
+      if(await Notification.requestPermission()!=='granted')throw {message:'Bildirim izni verilmedi. Tarayıcı/telefon ayarlarından bu site için bildirimlere izin ver.'};
+      const reg=await navigator.serviceWorker.ready,{key}=await api('/push/key'),kb=b64uBytes(key);
+      let sub=await reg.pushManager.getSubscription();
+      if(sub&&!sameBytes(sub.options&&sub.options.applicationServerKey,kb)){await sub.unsubscribe();sub=null} // sunucu anahtarı değişmişse yeniden abone ol
+      if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:kb});
+      await pushRegister(sub);PUSH.on=true;PUSH.msg='Bildirim sunucusu açık: uygulama kapalıyken de hatırlatma gelir.';
+    }catch(e){PUSH.msg=errMsg(e)}
+    PUSH.busy=false;render();
+  },
+  async pushoff(){
+    try{const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();if(sub){try{await api('/push/unsubscribe',{method:'POST',body:{endpoint:sub.endpoint}})}catch(e){}await sub.unsubscribe()}}catch(e){}
+    PUSH.on=false;PUSH.ep='';PUSH.msg='Bildirim sunucusu bu cihazda kapatıldı.';render();
+  },
+  async pushtest(){
+    try{const r=await api('/push/test',{method:'POST',body:{}});PUSH.msg=r.ok?'Deneme bildirimi gönderildi; birkaç saniye içinde gelmeli.':'Gönderilemedi: push servisi yanıt vermedi.'}catch(e){PUSH.msg=errMsg(e)}
     render();
   },
   remtest(){notify('🔔 Deneme bildirimi','Hatırlatmalar böyle görünecek.')},
