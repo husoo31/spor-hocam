@@ -110,5 +110,10 @@ window.CHANGELOG = [
       ['yeni', 'Hatırlatmalar > "Durum kontrolü" düğmesi: bildirim izni, servis çalışanı, bu cihazın aboneliği, sunucudaki kayıtlı cihaz sayısı, sürümler ve https durumunu tek ekranda gösterir; bildirim gelmeyince sorunun hangi halkada olduğu anlaşılır.'],
       ['iyi', 'Deneme bildirimine basınca anında "Gönderiliyor…" yazar ve sonuç her cihaz için ayrı satırda (servis adı, kabul etti/reddetti, HTTP kodu) çıkar; ayrıca ekranın üstünde de uyarı olarak görünür.'],
       ['fix', 'Servis çalışanı önbellek sürümü numarası düzeltildi.']],
+    commits: [['77b4c5f', '2026-10-14 19:03', 'Bildirim durum kontrolü (v0.20)']] },
+  { v: 'v0.21', d: '2026-10-14 19:52', title: 'Katalogda Türkiye öncelikli sıralama', items: [
+      ['yeni', 'Ürün aramada Türkiye\'de satılan ürünler öne alınır; dünya kataloğunda (--all) bile Fransız bir "ayran" Türk ürününün önüne geçmez. Restoran menüleri hepsinden önce gelir.'],
+      ['iyi', 'Gerçek veriyle ölçüldü: Open Food Facts\'te Türkiye etiketli 7.867 üründen yalnızca ~1.200\'ünde besin değeri var (4.999\'unda kalori yok, 1.637\'sinin adı yok). Coca-Cola, Nutella, Oreo gibi uluslararası markalar için dünya kataloğu (node tools/build-catalog.mjs --all) önerilir.'],
+      ['iyi', 'Eski katalog dosyaları (Türkiye sıralaması öncesi) yeniden kurulmadan da aranmaya devam eder.']],
     commits: [] },
 ];
