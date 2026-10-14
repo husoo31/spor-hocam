@@ -1062,12 +1062,13 @@ async function handlePush(req, res, user, p, m) {
     if (!subs.length) throw new HttpError(404, 'no_device', 'Bu hesapta bildirim açık cihaz yok.');
     const results = [];
     for (const s of subs) results.push(await pushSend(s, { title: '🔔 Deneme bildirimi', body: 'Bildirim sunucusu çalışıyor. Hatırlatmalar böyle görünecek.', tag: 'sh-test' }));
-    return send(res, 200, { ok: results.some(r => r.ok), results: results.map(r => ({ ok: r.ok, status: r.status })) });
+    return send(res, 200, { ok: results.some(r => r.ok), results: results.map((r, i) => ({ ok: r.ok, status: r.status, host: new URL(subs[i].endpoint).host, detail: r.detail || r.error || '' })) });
   }
   throw new HttpError(404, 'not_found', 'Bulunamadı.');
 }
 async function pushSend(sub, payload, opts = {}) {
   const r = await sendWebPush(sub, payload, vapid(), { subject: PUSH_SUBJECT, ttl: 3600, ...opts });
+  if (!r.ok) console.error(`[bildirim] gönderilemedi: ${new URL(sub.endpoint).host} HTTP ${r.status}${r.error ? ' (' + r.error + ')' : ''}${r.detail ? ' — ' + r.detail : ''}`);
   if (r.ok) q.pushOk.run(Date.now(), sub.id);
   else if (r.gone || sub.fails >= 20) { q.pushDel.run(sub.id); q.pushLogDelSub.run(sub.id); }
   else q.pushFail.run(sub.id);

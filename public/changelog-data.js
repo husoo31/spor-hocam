@@ -100,5 +100,10 @@ window.CHANGELOG = [
       ['yeni', 'Alarm gibi çalar: süre bitince uygulama açıkken Kapat\'a basana kadar (en çok 1 dk) tekrar tekrar bip; bildirim sunucusu açıkken kilitli ekranda 20 sn arayla en çok 7 kalıcı bildirim (uzun titreşim, ⏹ Durdur düğmesi). Durdur\'a basınca, bildirime dokununca ya da kaydırınca susar.'],
       ['iyi', 'Tercihler > Hatırlatmalar\'da "Dinlenme alarmı" anahtarı: kapatırsan süre bitince tek uyarı gelir. Ekran açıkken sunucu bildirimleri otomatik durur, uygulamayı açınca ekrandaki dinlenme bildirimi kalkar.'],
       ['iyi', 'Ses artık ilk dokunuşta hazırlanan tek bir ses bağlamıyla çalınır; telefonlarda süre bitince sesin çıkmama riskini azaltır. Web uygulaması telefonun yerel alarmı kadar kesintisiz çalamaz; kesin alarm için telefonun saatini kullan.']],
+    commits: [['61e84c2', '2026-10-14 17:13', 'Kendi dinlenme süren + alarm gibi bildirim (v0.18)']] },
+  { v: 'v0.19', d: '2026-10-14 18:55', title: 'Bildirim teşhisi ve daha geniş katalog', items: [
+      ['yeni', 'Deneme bildirimi sonucu ekranda: push servisinin adı, HTTP durum kodu ve (hata varsa) açıklaması görünür; sunucu günlüğüne de yazılır. Bildirim gelmediğinde sebebi anında görülür.'],
+      ['iyi', 'Ürün kataloğu artık kalorisi olup tek bir makrosu (protein/karbonhidrat/yağ) eksik ürünleri de alır; eksik değer boş kalır, uydurulmaz (aramada "–" görünür). Dört değerin hepsi şart koşmak için --strict.'],
+      ['iyi', 'Katalog kurulum aracı seçilen kapsamda kaç ürün olduğunu, kaçının alındığını ve neden elendiğini (adsız, kalorisiz, 2+ makro eksik, mantıksız değer, kopya) yazar.']],
     commits: [] },
 ];

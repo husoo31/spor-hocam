@@ -18,6 +18,7 @@ const got = [];
 const fake = http.createServer((req, res) => {
   const ch = []; req.on('data', d => ch.push(d)); req.on('end', () => {
     got.push({ url: req.url, headers: req.headers, body: Buffer.concat(ch) });
+    if (req.url.startsWith('/reject')) { res.writeHead(403, { 'Content-Type': 'text/plain' }); return res.end('the VAPID credentials in the authorization header do not correspond to the credentials used to create the subscriptions'); }
     res.writeHead(req.url.startsWith('/gone') ? 410 : 201); res.end();
   });
 });
@@ -172,6 +173,13 @@ try {
   await c('POST', '/api/push/rest', { endpoint: al.endpoint, seconds: 0 }, A); const cnt = got.filter(x => x.url === '/push/alarm').length;
   await sleep(2000); ok(got.filter(x => x.url === '/push/alarm').length <= cnt + 1, 'alarm: iptal (Durdur / bildirime dokunma / uygulamayı açma) tekrarları keser');
   await sleep(3500); ok(got.filter(x => x.url === '/push/alarm').length <= cnt + 1, 'alarm: iptalden sonra tekrar gelmez (' + cnt + ' → ' + got.filter(x => x.url === '/push/alarm').length + ')');
+  // teşhis: push servisi hata verirse durum kodu ve açıklama kullanıcıya iletilir
+  const E = { c: '' }; await c('POST', '/api/register', { username: 'Eda', password: 'eda-sifre-123456', invite: 'davet-kodu-123', consent: true }, E);
+  const bad = subscriber('/reject/x'); await c('POST', '/api/push/subscribe', { subscription: { endpoint: bad.endpoint, keys: bad.keys }, tz: TZ, cfg: { rem: {} }, state: stateNone }, E);
+  r = await c('POST', '/api/push/test', {}, E);
+  const f0 = r.j.results && r.j.results[0];
+  ok(r.s === 200 && r.j.ok === false && f0.ok === false && f0.status === 403 && /VAPID credentials/.test(f0.detail) && f0.host === `127.0.0.1:${FP}`, 'teşhis: push servisi 403 verince test yanıtı durum kodunu, açıklamayı ve sunucu adını içerir');
+  ok((await c('GET', '/api/push/key', undefined, E)).j.devices === 1, 'geçici hata (403) aboneliği silmez; yalnızca 404/410 siler');
 } finally {
   S1.srv.kill(); S2.srv.kill(); fake.close();
 }
