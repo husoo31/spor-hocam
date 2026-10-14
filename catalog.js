@@ -17,7 +17,7 @@ function createSchema(db) {
     CREATE TABLE foods(
       id INTEGER PRIMARY KEY, code TEXT, name TEXT NOT NULL, brand TEXT, src TEXT NOT NULL, restaurant TEXT,
       kcal REAL, protein REAL, carbs REAL, fat REAL, sugar REAL, fiber REAL, sat REAL, sodium REAL,
-      serving_g REAL, serving_txt TEXT, nutri TEXT);
+      serving_g REAL, serving_txt TEXT, nutri TEXT, tr INTEGER NOT NULL DEFAULT 0);
     CREATE UNIQUE INDEX foods_code ON foods(code) WHERE code IS NOT NULL;
     CREATE VIRTUAL TABLE foods_fts USING fts5(name_f, brand_f, rest_f, content='', tokenize='unicode61 remove_diacritics 2', prefix='2 3');
     CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);`);
@@ -46,7 +46,8 @@ export function offRecordWhy(get, { countries, all, loose }) {
   const sodiumG = numOf(get('sodium_100g')) ?? (numOf(get('salt_100g')) !== null ? numOf(get('salt_100g')) / 2.5 : null);
   const rec = { code, name, brand: clean(get('brands')).split(',')[0].slice(0, 60) || null, src: 'off', restaurant: null, ...p,
     sugar: numOf(get('sugars_100g')), fiber: numOf(get('fiber_100g')), sat: numOf(get('saturated-fat_100g')), sodium: sodiumG === null ? null : sodiumG * 1000,
-    serving_g: numOf(get('serving_quantity')), serving_txt: clean(get('serving_size')).slice(0, 40) || null, nutri: /^[a-e]$/.test(get('nutriscore_grade') || '') ? get('nutriscore_grade') : null };
+    serving_g: numOf(get('serving_quantity')), serving_txt: clean(get('serving_size')).slice(0, 40) || null, nutri: /^[a-e]$/.test(get('nutriscore_grade') || '') ? get('nutriscore_grade') : null,
+    tr: String(get('countries_tags') || '').includes('en:turkey') ? 1 : 0 }; // Türkiye'de satılanlar aramada öne alınır
   if (!plausibleMacros(rec)) return { why: 'implausible' };
   if (rec.sugar !== null && rec.carbs !== null && rec.sugar > rec.carbs + 0.5) rec.sugar = null; // şeker karbonhidrattan fazla olamaz: tutarsız alanı at
   if (rec.serving_g !== null && (rec.serving_g < 1 || rec.serving_g > 2000)) rec.serving_g = null;
@@ -95,10 +96,10 @@ export async function buildCatalog({ input, out, countries = ['turkey'], all = f
   const db = new DatabaseSync(tmp);
   db.exec('PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF;');
   createSchema(db);
-  const ins = db.prepare(`INSERT OR IGNORE INTO foods(code,name,brand,src,restaurant,kcal,protein,carbs,fat,sugar,fiber,sat,sodium,serving_g,serving_txt,nutri)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const ins = db.prepare(`INSERT OR IGNORE INTO foods(code,name,brand,src,restaurant,kcal,protein,carbs,fat,sugar,fiber,sat,sodium,serving_g,serving_txt,nutri,tr)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const fts = db.prepare('INSERT INTO foods_fts(rowid,name_f,brand_f,rest_f) VALUES(?,?,?,?)');
-  const put = r => { const x = ins.run(r.code, r.name, r.brand, r.src, r.restaurant, r2(r.kcal), r2(r.protein), r2(r.carbs), r2(r.fat), r2(r.sugar), r2(r.fiber), r2(r.sat), r2(r.sodium), r.serving_g, r.serving_txt, r.nutri);
+  const put = r => { const x = ins.run(r.code, r.name, r.brand, r.src, r.restaurant, r2(r.kcal), r2(r.protein), r2(r.carbs), r2(r.fat), r2(r.sugar), r2(r.fiber), r2(r.sat), r2(r.sodium), r.serving_g, r.serving_txt, r.nutri, r.tr ? 1 : 0);
     if (x.changes) fts.run(Number(x.lastInsertRowid), norm(r.name), norm(r.brand || ''), norm(r.restaurant || '')); return !!x.changes; };
   const st = { lines: 0, off: 0, partial: 0, menu: 0, menuSkipped: 0, why: { code: 0, country: 0, name: 0, kcal: 0, macros1: 0, macros2: 0, implausible: 0, dup: 0 } };
   db.exec('BEGIN');
@@ -143,11 +144,15 @@ const toItem = r => {
   const per100 = {}; for (const k of FIELDS) if (r[k] !== null && r[k] !== undefined) per100[k] = r[k];
   return { id: r.id, code: r.code, name: r.name, brand: r.brand, src: r.src, restaurant: r.restaurant, per100, servingG: r.serving_g, servingTxt: r.serving_txt, nutri: r.nutri };
 };
+const hasTr = new WeakMap();
 export function searchCatalog(db, query, limit = 20) {
   const toks = norm(query).split(' ').filter(Boolean).slice(0, 6);
   if (!toks.length) return [];
   const match = toks.map(t => '"' + t.replace(/"/g, '') + '"*').join(' ');
+  // sıralama: restoran menüsü, sonra Türkiye'de satılanlar, sonra metin uyumu (bm25). Eski kataloglarda tr sütunu yoktur.
+  if (!hasTr.has(db)) hasTr.set(db, db.prepare('PRAGMA table_info(foods)').all().some(c => c.name === 'tr'));
+  const lim = Math.max(1, Math.min(50, limit)), trOrder = hasTr.get(db) ? 'f.tr DESC, ' : '';
   const rows = db.prepare(`SELECT f.* FROM (SELECT rowid, bm25(foods_fts, 8, 3, 4) AS r FROM foods_fts WHERE foods_fts MATCH ? ORDER BY r LIMIT ?) m
-    JOIN foods f ON f.id = m.rowid ORDER BY (f.src = 'menu') DESC, m.r`).all(match, Math.max(1, Math.min(50, limit)));
+    JOIN foods f ON f.id = m.rowid ORDER BY (f.src = 'menu') DESC, ${trOrder}m.r LIMIT ?`).all(match, trOrder ? 300 : lim, lim); // Türk ürünleri bm25 ilk 300'e girsin diye iç sorgu geniş
   return rows.map(toItem);
 }

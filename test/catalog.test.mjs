@@ -32,6 +32,9 @@ rows.push(
   { code: '8690000000008', product_name: 'Yağsız Veri Ürün', countries_tags: 'en:turkey', 'energy-kcal_100g': '120', 'proteins_100g': '4', 'carbohydrates_100g': '20' }, // yağ eksik: esnek modda alınır
   { code: '8690000000009', product_name: 'Yalnız Protein Ürün', countries_tags: 'en:turkey', 'energy-kcal_100g': '120', 'proteins_100g': '4' }, // iki makro eksik: hep elenir
   { code: '8690000000010', product_name: 'Yalnız Kalori Ürün', countries_tags: 'en:turkey', 'energy-kcal_100g': '120' }); // üç makro eksik: hep elenir
+rows.push(
+  { code: '3000000000011', product_name: 'Ayran', brands: 'Danone', countries_tags: 'en:france', 'energy-kcal_100g': '40', 'proteins_100g': '3', 'carbohydrates_100g': '4', 'fat_100g': '1' }, // dünya: metin uyumu daha iyi ama Türkiye'de satılmıyor
+  { code: '8690000000011', product_name: 'Ayran Tuzlu Klasik Gerçek Yayık', brands: 'Köy', countries_tags: 'en:turkey', 'energy-kcal_100g': '30', 'proteins_100g': '2', 'carbohydrates_100g': '2', 'fat_100g': '1.5' });
 for (let i = 0; i < 3000; i++) rows.push({ code: String(8691000000000 + i), product_name: `Dolgu Ürün ${i} Peynir`, brands: 'Marka' + (i % 7), countries_tags: 'en:turkey', 'energy-kcal_100g': '250', 'proteins_100g': '10', 'carbohydrates_100g': '10', 'fat_100g': '20' });
 const csvPath = path.join(tmp, 'off.csv.gz');
 fs.writeFileSync(csvPath, zlib.gzipSync([H.join('\t'), ...rows.map(row)].join('\n') + '\n'));
@@ -68,9 +71,9 @@ ok(Math.abs(mc.rows[0].kcal - 250) < 0.01 && Math.abs(mc.rows[1].carbs - 40) < 0
 const out1 = build('--src', csvPath, '--menus', path.join(tmp, 'menus'));
 const out0 = build('--src', csvPath, '--strict', '--out', path.join(tmp, 'strict.db'));
 const db = openCatalog(dbFile), info = catalogInfo(db);
-ok(info.off === 3005 && info.menu === 2 && info.total === 3007 && info.scope === 'turkey', `katalog kuruldu (esnek, varsayılan): ${info.off} ürün + ${info.menu} menü (yinelenen barkod ve hatalı satırlar dışarıda)`);
-ok(/Seçilen kapsamda etiketli ürün: 3\.011/.test(out1) && /Alınan: 3\.005 \(1 tanesinde bir makro eksik/.test(out1) && /adsız 1 · kalorisiz 1 · 2\+ makro eksik 2 · mantıksız değer 1 · kopya 1/.test(out1), 'araç neden elendiğini yazar: etiketli 3.011, alınan 3.005, adsız 1, kalorisiz 1, 2+ makro eksik 2, mantıksız 1, kopya 1');
-ok(/Alınan: 3\.004/.test(out0) && /1\+ makro eksik 3/.test(out0), '--strict: dört değerin hepsi şart (3.004 ürün; 1+ makro eksik 3)');
+ok(info.off === 3006 && info.menu === 2 && info.total === 3008 && info.scope === 'turkey', `katalog kuruldu (esnek, varsayılan): ${info.off} ürün + ${info.menu} menü (yinelenen barkod ve hatalı satırlar dışarıda)`);
+ok(/Seçilen kapsamda etiketli ürün: 3\.012/.test(out1) && /Alınan: 3\.006 \(1 tanesinde bir makro eksik/.test(out1) && /adsız 1 · kalorisiz 1 · 2\+ makro eksik 2 · mantıksız değer 1 · kopya 1/.test(out1), 'araç neden elendiğini yazar: etiketli 3.012, alınan 3.006, adsız 1, kalorisiz 1, 2+ makro eksik 2, mantıksız 1, kopya 1');
+ok(/Alınan: 3\.005/.test(out0) && /1\+ makro eksik 3/.test(out0), '--strict: dört değerin hepsi şart (3.005 ürün; 1+ makro eksik 3)');
 ok(/Bitti/.test(out1) && !fs.existsSync(dbFile + '.tmp'), 'araç özet yazdı; geçici dosya kalmadı (atomik yer değiştirme)');
 
 // Türkçe arama
@@ -88,6 +91,16 @@ ok(s('"; DROP TABLE foods; --').length === 0 && s('NEAR(a b) OR *').length === 0
 const ay = s('ayran')[0]; ok(ay.per100.kcal === 32 && ay.servingG === 200 && ay.brand === 'Sütaş' && ay.per100.sodium === 200, 'ürün alanları: 100 g değerleri, porsiyon, marka');
 db.close();
 
+// eski katalog dosyası (tr sütunu yok) hâlâ aranabilir
+import { DatabaseSync } from 'node:sqlite';
+const oldFile = path.join(tmp, 'old.db'), od = new DatabaseSync(oldFile);
+od.exec(`CREATE TABLE foods(id INTEGER PRIMARY KEY, code TEXT, name TEXT NOT NULL, brand TEXT, src TEXT NOT NULL, restaurant TEXT, kcal REAL, protein REAL, carbs REAL, fat REAL, sugar REAL, fiber REAL, sat REAL, sodium REAL, serving_g REAL, serving_txt TEXT, nutri TEXT);
+  CREATE VIRTUAL TABLE foods_fts USING fts5(name_f, brand_f, rest_f, content='', tokenize='unicode61 remove_diacritics 2', prefix='2 3');
+  CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
+  INSERT INTO foods(id,code,name,src,kcal,protein,carbs,fat) VALUES(1,'8690000000099','Eski Sürüm Ürün','off',100,1,2,3);
+  INSERT INTO foods_fts(rowid,name_f,brand_f,rest_f) VALUES(1,'eski surum urun','','');`); od.close();
+const odb = openCatalog(oldFile); ok(searchCatalog(odb, 'eski surum')[0]?.name === 'Eski Sürüm Ürün', 'tr sütunu olmayan eski katalog dosyası da aranabilir (geriye uyumlu)'); odb.close();
+
 // sunucu ucu
 const PORT = 18320, base = `http://127.0.0.1:${PORT}`;
 const srv = spawn('node', ['--disable-warning=ExperimentalWarning', 'server.js'], { cwd: root, stdio: 'ignore', env: { ...process.env, PORT, DATA_DIR: tmp, INVITE_CODE: 'davet-kodu-123', PUSH_DISABLED: 'true' } });
@@ -98,12 +111,14 @@ try {
   ok((await call('GET', '/api/foods/search?q=ayran')).s === 401, 'oturumsuz arama 401');
   await call('POST', '/api/register', { username: 'Ali', password: 'sifre12345-xyz', invite: 'davet-kodu-123', consent: true });
   let r = await call('GET', '/api/foods/search?q=' + encodeURIComponent('ülker çikolatalı'));
-  ok(r.s === 200 && r.j.items[0]?.name === 'Çikolatalı Gofret' && r.j.catalog.total === 3007 && r.j.catalog.off === 3005, 'sunucu: arama + katalog bilgisi (3005 ürün + 2 menü)');
+  ok(r.s === 200 && r.j.items[0]?.name === 'Çikolatalı Gofret' && r.j.catalog.total === 3008 && r.j.catalog.off === 3006, 'sunucu: arama + katalog bilgisi (3006 ürün + 2 menü)');
   r = await call('GET', '/api/foods/search?q=a'); ok(r.s === 200 && r.j.items.length === 0, '1 harflik arama boş döner');
   r = await call('GET', '/api/foods/search?q=' + encodeURIComponent('burger') + '&limit=1'); ok(r.j.items.length === 1 && r.j.items[0].src === 'menu', 'limit parametresi');
   // sıcak yenileme: katalogu --all ile yeniden kur, sunucuyu yeniden başlatmadan Nutella görünür
   ok((await call('GET', '/api/foods/search?q=nutella')).j.items.length === 0, 'varsayılan kapsamda Nutella (Fransa) yok');
   await sleep(1100); build('--src', csvPath, '--menus', path.join(tmp, 'menus'), '--all');
+  r = await call('GET', '/api/foods/search?q=ayran'); const ix = n => r.j.items.findIndex(x => n(x));
+  ok(ix(x => x.brand === 'Danone') > ix(x => x.name.startsWith('Ayran Tuzlu')) && ix(x => x.brand === 'Danone') > ix(x => x.brand === 'Sütaş') && ix(x => x.brand === 'Danone') >= 0, 'dünya kataloğunda Türkiye\'de satılan ürünler öne alınır (metin uyumu daha iyi olan Fransız "Ayran" sonra gelir)');
   r = await call('GET', '/api/foods/search?q=nutella'); ok(r.j.items[0]?.name === 'Nutella' && r.j.catalog.scope === 'dünya', 'katalog yenilenince sunucu yeniden başlamadan yeni dosyayı kullanır (--all: Nutella)');
   // katalog yoksa
   fs.rmSync(dbFile); r = await call('GET', '/api/foods/search?q=ayran'); ok(r.s === 200 && r.j.catalog === false && r.j.items.length === 0, 'katalog dosyası yoksa hata değil, catalog:false döner');
