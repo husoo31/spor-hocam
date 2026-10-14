@@ -1329,7 +1329,7 @@ function fsResHtml(){
   if(!F.res.length)return F.q.trim().length<2?'':`<p class="small mut">“${esc(F.q)}” için sonuç yok. Yazıyla hesaplat ya da barkodu dene.</p>`;
   return F.res.map((r,i)=>{
     const p=r.per100,sg=r.servingG,title=r.src==='menu'?`${esc(r.restaurant)} · ${esc(r.name)}`:`${r.brand?esc(r.brand)+' · ':''}${esc(r.name)}`;
-    return `<div class="meal" style="align-items:center"><div class="grow"><div>${title}</div><div class="mut small num">100 g: ${r0(p.kcal)} kcal · P ${f1(p.protein)} · K ${f1(p.carbs)} · Y ${f1(p.fat)}${sg?` · porsiyon ${r0(sg)} g ≈ ${r0(p.kcal*sg/100)} kcal`:''}${r.nutri?` · Nutri-Score ${esc(r.nutri.toUpperCase())}`:''}</div></div><button class="chip on" style="margin:0" data-a="fspick" data-ix="${i}">Ekle</button></div>`;
+    return `<div class="meal" style="align-items:center"><div class="grow"><div>${title}</div><div class="mut small num">100 g: ${r0(p.kcal)} kcal · P ${p.protein===undefined?'–':f1(p.protein)} · K ${p.carbs===undefined?'–':f1(p.carbs)} · Y ${p.fat===undefined?'–':f1(p.fat)}${sg?` · porsiyon ${r0(sg)} g ≈ ${r0(p.kcal*sg/100)} kcal`:''}${r.nutri?` · Nutri-Score ${esc(r.nutri.toUpperCase())}`:''}</div></div><button class="chip on" style="margin:0" data-a="fspick" data-ix="${i}">Ekle</button></div>`;
   }).join('')+`<p class="note">${F.info&&F.info.total?`Katalog: ${F.info.total.toLocaleString('tr-TR')} ürün. `:''}Open Food Facts topluluk verisidir (ODbL); etiketle karşılaştır. Restoran değerleri zincirin yayımladığı porsiyon bilgisidir.</p>`;
 }
 function fsCard(){
@@ -2631,7 +2631,11 @@ const A={
     PUSH.on=false;PUSH.ep='';PUSH.msg='Bildirim sunucusu bu cihazda kapatıldı.';render();
   },
   async pushtest(){
-    try{const r=await api('/push/test',{method:'POST',body:{}});PUSH.msg=r.ok?'Deneme bildirimi gönderildi; birkaç saniye içinde gelmeli.':'Gönderilemedi: push servisi yanıt vermedi.'}catch(e){PUSH.msg=errMsg(e)}
+    try{
+      const r=await api('/push/test',{method:'POST',body:{}}),f=r.results&&r.results[0]||{};
+      PUSH.msg=r.ok?`Deneme bildirimi push servisine ulaştı (${f.host||''} · HTTP ${f.status}). Birkaç saniye içinde gelmeli; gelmezse telefonun bildirim izinlerine, Rahatsız Etme/Odak modlarına ve pil tasarrufuna bak.`
+        :`Gönderilemedi: ${f.host||'push servisi'} HTTP ${f.status||'yanıt yok'}${f.detail?' — '+f.detail:''}. Bu mesajı bana ilet.`;
+    }catch(e){PUSH.msg=errMsg(e)}
     render();
   },
   remtest(){notify('🔔 Deneme bildirimi','Hatırlatmalar böyle görünecek.')},

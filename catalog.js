@@ -28,26 +28,31 @@ const numOf = v => { if (v === undefined || v === null || v === '') return null;
 const r2 = x => x === null || x === undefined ? null : Math.round(x * 100) / 100;
 const clean = s => String(s || '').replace(/\s+/g, ' ').trim();
 
-// Open Food Facts CSV satırı (başlık adıyla) → katalog kaydı ya da null (eksik/akla uygun olmayan değer)
-export function offRecord(get, { countries, all }) {
+// Open Food Facts CSV satırı (başlık adıyla) → { rec } ya da { why } (neden elendi: code, country, name, kcal, macros1, macros2, implausible).
+// loose: kalorisi olup tek bir makrosu (protein/karbonhidrat/yağ) eksik ürünler de alınır (eksik değer boş kalır, uydurulmaz); iki ya da daha fazla eksik her zaman elenir.
+export function offRecordWhy(get, { countries, all, loose }) {
   const code = clean(get('code')).replace(/\D/g, '');
-  if (code.length < 8 || code.length > 14) return null;
-  if (!all) { const tags = String(get('countries_tags') || ''); if (!countries.some(c => tags.includes('en:' + c))) return null; }
+  if (code.length < 8 || code.length > 14) return { why: 'code' };
+  if (!all) { const tags = String(get('countries_tags') || ''); if (!countries.some(c => tags.includes('en:' + c))) return { why: 'country' }; }
   const name = clean(get('product_name') || get('generic_name')).slice(0, 120);
-  if (name.length < 2) return null;
+  if (name.length < 2) return { why: 'name' };
   let kcal = numOf(get('energy-kcal_100g'));
   if (kcal === null) { const kj = numOf(get('energy-kj_100g')) ?? numOf(get('energy_100g')); if (kj !== null) kcal = kj / 4.184; }
+  if (kcal === null) return { why: 'kcal' };
   const p = { kcal, protein: numOf(get('proteins_100g')), carbs: numOf(get('carbohydrates_100g')), fat: numOf(get('fat_100g')) };
-  if (Object.values(p).some(v => v === null)) return null; // dört çekirdek değerin hepsi olmalı
+  const missing = ['protein', 'carbs', 'fat'].filter(k => p[k] === null).length;
+  if (missing >= 2) return { why: 'macros2' };
+  if (missing === 1 && !loose) return { why: 'macros1' };
   const sodiumG = numOf(get('sodium_100g')) ?? (numOf(get('salt_100g')) !== null ? numOf(get('salt_100g')) / 2.5 : null);
   const rec = { code, name, brand: clean(get('brands')).split(',')[0].slice(0, 60) || null, src: 'off', restaurant: null, ...p,
     sugar: numOf(get('sugars_100g')), fiber: numOf(get('fiber_100g')), sat: numOf(get('saturated-fat_100g')), sodium: sodiumG === null ? null : sodiumG * 1000,
     serving_g: numOf(get('serving_quantity')), serving_txt: clean(get('serving_size')).slice(0, 40) || null, nutri: /^[a-e]$/.test(get('nutriscore_grade') || '') ? get('nutriscore_grade') : null };
-  if (!plausibleMacros(rec)) return null;
-  if (rec.sugar !== null && rec.sugar > rec.carbs + 0.5) rec.sugar = null; // şeker karbonhidrattan fazla olamaz: tutarsız alanı at
+  if (!plausibleMacros(rec)) return { why: 'implausible' };
+  if (rec.sugar !== null && rec.carbs !== null && rec.sugar > rec.carbs + 0.5) rec.sugar = null; // şeker karbonhidrattan fazla olamaz: tutarsız alanı at
   if (rec.serving_g !== null && (rec.serving_g < 1 || rec.serving_g > 2000)) rec.serving_g = null;
-  return rec;
+  return { rec };
 }
+export const offRecord = (get, opts) => offRecordWhy(get, opts).rec || null;
 
 // Restoran menüsü CSV'si (porsiyon başına değerler) → 100 g başına kayıtlar. Ayraç ; , ya da sekme; # ile başlayan satırlar yok sayılır.
 const MENU_COLS = { restoran: 'restaurant', restaurant: 'restaurant', urun: 'name', ürün: 'name', name: 'name', porsiyon_g: 'serving', porsiyon: 'serving', serving_g: 'serving',
@@ -84,7 +89,7 @@ async function openStream(input) {
   return /\.gz(\?|$)/.test(input) ? s.pipe(zlib.createGunzip()) : s;
 }
 // opts: { input, out, countries:['turkey'], all, menusDir, log }. Geçici dosyaya yazar, bitince yer değiştirir (çalışan sunucu yarım dosya görmez).
-export async function buildCatalog({ input, out, countries = ['turkey'], all = false, menusDir, log = () => {} }) {
+export async function buildCatalog({ input, out, countries = ['turkey'], all = false, loose = true, menusDir, log = () => {} }) {
   const tmp = out + '.tmp';
   for (const f of [tmp, tmp + '-journal', tmp + '-wal', tmp + '-shm']) fs.rmSync(f, { force: true });
   const db = new DatabaseSync(tmp);
@@ -95,7 +100,7 @@ export async function buildCatalog({ input, out, countries = ['turkey'], all = f
   const fts = db.prepare('INSERT INTO foods_fts(rowid,name_f,brand_f,rest_f) VALUES(?,?,?,?)');
   const put = r => { const x = ins.run(r.code, r.name, r.brand, r.src, r.restaurant, r2(r.kcal), r2(r.protein), r2(r.carbs), r2(r.fat), r2(r.sugar), r2(r.fiber), r2(r.sat), r2(r.sodium), r.serving_g, r.serving_txt, r.nutri);
     if (x.changes) fts.run(Number(x.lastInsertRowid), norm(r.name), norm(r.brand || ''), norm(r.restaurant || '')); return !!x.changes; };
-  const st = { lines: 0, off: 0, menu: 0, menuSkipped: 0 };
+  const st = { lines: 0, off: 0, partial: 0, menu: 0, menuSkipped: 0, why: { code: 0, country: 0, name: 0, kcal: 0, macros1: 0, macros2: 0, implausible: 0, dup: 0 } };
   db.exec('BEGIN');
   if (input) {
     const rl = readline.createInterface({ input: await openStream(input), crlfDelay: Infinity });
@@ -103,8 +108,10 @@ export async function buildCatalog({ input, out, countries = ['turkey'], all = f
     for await (const line of rl) {
       if (!idx) { idx = Object.fromEntries(line.split('\t').map((h, i) => [h, i])); continue; }
       st.lines++;
-      const c = line.split('\t'), rec = offRecord(k => c[idx[k]], { countries, all });
-      if (rec && put(rec)) st.off++;
+      const c = line.split('\t'), { rec, why } = offRecordWhy(k => c[idx[k]], { countries, all, loose });
+      if (why) st.why[why]++;
+      else if (put(rec)) { st.off++; if (rec.protein === null || rec.carbs === null || rec.fat === null) st.partial++; }
+      else st.why.dup++;
       if (st.lines % 200000 === 0) { db.exec('COMMIT; BEGIN'); log(`${st.lines.toLocaleString('tr-TR')} satır okundu, ${st.off.toLocaleString('tr-TR')} ürün alındı…`); }
     }
     if (!idx) throw new Error('Girdi boş ya da başlık satırı yok.');
@@ -120,6 +127,7 @@ export async function buildCatalog({ input, out, countries = ['turkey'], all = f
   db.exec("INSERT INTO foods_fts(foods_fts) VALUES('optimize')");
   const meta = db.prepare('INSERT INTO meta(key,value) VALUES(?,?)');
   meta.run('built', String(Date.now())); meta.run('off', String(st.off)); meta.run('menu', String(st.menu)); meta.run('scope', all ? 'dünya' : countries.join(','));
+  st.matched = st.lines - st.why.code - st.why.country; // seçilen ülke(ler)de etiketli ürün sayısı (geçerli barkodlu)
   db.close();
   fs.renameSync(tmp, out);
   return st;

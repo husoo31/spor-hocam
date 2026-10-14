@@ -65,6 +65,8 @@ export async function sendWebPush(sub, payload, vapid, { subject, ttl = 3600, ur
       Authorization: vapidHeader(sub.endpoint, vapid, subject), 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream',
       TTL: String(ttl), Urgency: urgency } });
   } catch (e) { return { ok: false, status: 0, gone: false, error: e.name === 'TimeoutError' ? 'zaman aşımı' : 'bağlantı hatası' }; }
-  try { await r.arrayBuffer(); } catch (e) { /* yok say */ }
-  return { ok: r.status >= 200 && r.status < 300, status: r.status, gone: r.status === 404 || r.status === 410 };
+  const ok = r.status >= 200 && r.status < 300;
+  let detail = ''; // hata olursa push servisinin açıklaması (örn. VAPID anahtarı uyuşmuyor): teşhis için kısa bir parça
+  try { const t = await r.text(); if (!ok) detail = t.replace(/\s+/g, ' ').trim().slice(0, 200); } catch (e) { /* yok say */ }
+  return { ok, status: r.status, gone: r.status === 404 || r.status === 410, detail };
 }
