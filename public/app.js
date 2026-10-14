@@ -1306,8 +1306,8 @@ function remCard(){
     ${pushOk()?`<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><div><b>🔔 Bildirim sunucusu</b> <span class="small mut">· uygulama kapalıyken de</span></div>
       <p class="small mut" style="margin:6px 0 0">Sunucu, seçtiğin saatte ve yalnızca henüz yapmadığın işler için bu cihaza bildirim gönderir.</p>
       <p class="small" style="margin:8px 0 0">${PUSH.on?'✅ Bu cihazda açık.':'Bu cihazda kapalı.'}</p>
-      <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">${PUSH.on?`<button class="btn alt sm" data-a="pushtest">Deneme bildirimi gönder</button><button class="btn alt sm" data-a="pushoff">Bu cihazda kapat</button>`:`<button class="btn sm" data-a="pushon" ${PUSH.busy?'disabled':''}>${PUSH.busy?'Açılıyor…':'🔔 Bildirim sunucusunu aç'}</button>`}</div>
-      ${PUSH.msg?`<p class="small" style="margin:8px 0 0">${esc(PUSH.msg)}</p>`:''}</div>`
+      <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">${PUSH.on?`<button class="btn alt sm" data-a="pushtest">Deneme bildirimi gönder</button><button class="btn alt sm" data-a="pushcheck">Durum kontrolü</button><button class="btn alt sm" data-a="pushoff">Bu cihazda kapat</button>`:`<button class="btn sm" data-a="pushon" ${PUSH.busy?'disabled':''}>${PUSH.busy?'Açılıyor…':'🔔 Bildirim sunucusunu aç'}</button>`}</div>
+      ${PUSH.msg?`<p class="small" style="margin:8px 0 0;white-space:pre-line">${esc(PUSH.msg)}</p>`:''}</div>`
     :`<div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn alt sm" data-a="remperm">🔔 Bildirimlere izin ver</button><button class="btn alt sm" data-a="remtest">Deneme gönder</button></div>
     <p class="small" style="margin:8px 0 0">${permTxt}</p>
     <p class="small" style="margin:8px 0 0">${PUSH.msg?esc(PUSH.msg):(location.protocol!=='https:'&&location.hostname!=='localhost'?'Uygulama kapalıyken bildirim için https adresi gerekir; şu an yalnızca uygulama açıkken bildirim gelir.':'Bu tarayıcı anlık bildirimi desteklemiyor; hatırlatmalar yalnızca uygulama açıkken bildirim olarak gelir. iPhone\'da önce uygulamayı ana ekrana ekle (iOS 16.4+).')}</p>`}
@@ -2631,12 +2631,31 @@ const A={
     PUSH.on=false;PUSH.ep='';PUSH.msg='Bildirim sunucusu bu cihazda kapatıldı.';render();
   },
   async pushtest(){
+    PUSH.msg='Gönderiliyor… (en çok 15 sn sürer)';render();
     try{
-      const r=await api('/push/test',{method:'POST',body:{}}),f=r.results&&r.results[0]||{};
-      PUSH.msg=r.ok?`Deneme bildirimi push servisine ulaştı (${f.host||''} · HTTP ${f.status}). Birkaç saniye içinde gelmeli; gelmezse telefonun bildirim izinlerine, Rahatsız Etme/Odak modlarına ve pil tasarrufuna bak.`
-        :`Gönderilemedi: ${f.host||'push servisi'} HTTP ${f.status||'yanıt yok'}${f.detail?' — '+f.detail:''}. Bu mesajı bana ilet.`;
-    }catch(e){PUSH.msg=errMsg(e)}
-    render();
+      const r=await api('/push/test',{method:'POST',body:{}}),mine=PUSH.ep?new URL(PUSH.ep).host:'';
+      const lines=(r.results||[]).map((f,i)=>`${(r.results.length>1?(f.host===mine?'Bu cihaz':'Diğer cihaz')+': ':'')}${f.host||'push servisi'} → ${f.ok?'kabul etti':'REDDETTİ'} (HTTP ${f.status||'yanıt yok'})${f.detail?' — '+f.detail:''}`);
+      PUSH.msg=(r.ok?'Deneme bildirimi push servisine ulaştı. Birkaç saniye içinde gelmeli; gelmezse “Durum kontrolü”ne bas ve sonucu bana ilet.':'Gönderilemedi. Bu mesajı bana ilet.')+'\n'+lines.join('\n');
+    }catch(e){PUSH.msg='Hata: '+errMsg(e)+(e&&e.status?' (HTTP '+e.status+')':'')+'. Bu mesajı bana ilet.'}
+    toast(PUSH.msg.split('\n')[0],true);render();
+  },
+  // bildirim zincirinin her halkasını tek ekranda gösterir: izin, servis çalışanı, abonelik, sunucu kaydı, sürümler
+  async pushcheck(){
+    PUSH.msg='Kontrol ediliyor…';render();
+    const L=[];
+    try{
+      L.push('Bildirim izni: '+(window.Notification?Notification.permission:'desteklenmiyor'));
+      L.push('Anlık bildirim (PushManager): '+(window.PushManager?'var':'YOK'));
+      const reg=navigator.serviceWorker&&await Promise.race([navigator.serviceWorker.ready,new Promise(r=>setTimeout(()=>r(null),4000))]);
+      L.push('Servis çalışanı: '+(reg?((reg.active&&reg.active.state)||'etkin değil')+' · kapsam '+String(reg.scope||'/').replace(location.origin,''):'HAZIR DEĞİL (4 sn beklendi)'));
+      const sub=reg&&await reg.pushManager.getSubscription();
+      L.push('Bu cihazın aboneliği: '+(sub?new URL(sub.endpoint).host:'YOK'));
+      try{const k=await api('/push/key');L.push('Sunucuda kayıtlı cihaz: '+k.devices+(sub&&k.devices===0?' (abonelik var ama sunucuya kaydedilmemiş!)':''))}catch(e){L.push('Sunucuya ulaşılamadı: '+errMsg(e))}
+      try{const t=await (await fetch('/sw.js',{cache:'no-store'})).text(),v=(/sh-shell-(v\d+)/.exec(t)||[])[1],ks=(window.caches&&await caches.keys())||[];L.push('Servis çalışanı sürümü: '+(v||'?')+' · önbellek: '+(ks.join(', ')||'yok'))}catch(e){}
+      L.push('Uygulama sürümü: '+(((window.CHANGELOG||[]).slice(-1)[0]||{}).v||'?')+' · https: '+(location.protocol==='https:'?'evet':'HAYIR'));
+      L.push('Sayfa: '+(PUSH.on?'bildirim sunucusu AÇIK':'bildirim sunucusu KAPALI'));
+    }catch(e){L.push('Kontrol hatası: '+errMsg(e))}
+    PUSH.msg=L.join('\n');render();
   },
   remtest(){notify('🔔 Deneme bildirimi','Hatırlatmalar böyle görünecek.')},
   csv(ds){const r=csvRows(ds.t);dlFile('spor-hocam-'+({food:'yemekler',lift:'antrenman'}[ds.t]||'gunluk')+'-'+TODAY+'.csv',ATH.toCsv(r.h,r.rows))},

@@ -105,5 +105,10 @@ window.CHANGELOG = [
       ['yeni', 'Deneme bildirimi sonucu ekranda: push servisinin adı, HTTP durum kodu ve (hata varsa) açıklaması görünür; sunucu günlüğüne de yazılır. Bildirim gelmediğinde sebebi anında görülür.'],
       ['iyi', 'Ürün kataloğu artık kalorisi olup tek bir makrosu (protein/karbonhidrat/yağ) eksik ürünleri de alır; eksik değer boş kalır, uydurulmaz (aramada "–" görünür). Dört değerin hepsi şart koşmak için --strict.'],
       ['iyi', 'Katalog kurulum aracı seçilen kapsamda kaç ürün olduğunu, kaçının alındığını ve neden elendiğini (adsız, kalorisiz, 2+ makro eksik, mantıksız değer, kopya) yazar.']],
+    commits: [['8c9a2a2', '2026-10-14 18:52', 'Bildirim teşhisi + daha geniş katalog (v0.19)']] },
+  { v: 'v0.20', d: '2026-10-14 19:05', title: 'Bildirim durum kontrolü', items: [
+      ['yeni', 'Hatırlatmalar > "Durum kontrolü" düğmesi: bildirim izni, servis çalışanı, bu cihazın aboneliği, sunucudaki kayıtlı cihaz sayısı, sürümler ve https durumunu tek ekranda gösterir; bildirim gelmeyince sorunun hangi halkada olduğu anlaşılır.'],
+      ['iyi', 'Deneme bildirimine basınca anında "Gönderiliyor…" yazar ve sonuç her cihaz için ayrı satırda (servis adı, kabul etti/reddetti, HTTP kodu) çıkar; ayrıca ekranın üstünde de uyarı olarak görünür.'],
+      ['fix', 'Servis çalışanı önbellek sürümü numarası düzeltildi.']],
     commits: [] },
 ];
