@@ -182,6 +182,7 @@ Ayarlar → Tercihler → Hatırlatmalar → **Bildirim sunucusunu aç** ile tel
 - **Anahtarlar:** VAPID anahtar çifti ilk açılışta üretilir ve veritabanında (`settings`) saklanır; `/data` volume'unda kalır. Veritabanı silinirse kullanıcılar bildirimi yeniden açmalıdır.
 - **Ortam değişkenleri (hepsi isteğe bağlı):** `VAPID_SUBJECT` (örn. `mailto:sen@alanadin.com`; Apple geçerli bir mailto/https ister, varsayılan `PUBLIC_URL` ya da bir mailto), `PUBLIC_URL` (https adresin), `PUSH_DISABLED=true` (bildirimleri kapatır), `PUSH_TICK_MS` (kontrol aralığı, varsayılan 60000).
 - **Güvenlik:** Sunucu yalnızca bilinen tarayıcı push servislerine (FCM, Mozilla, Apple, Windows) istek atar; kullanıcının verdiği başka bir adrese (örn. iç ağ) göndermez. Kullanıcı başına en çok 5 cihaz tutulur; çıkış yapınca ve hesap silinince abonelikler silinir. Geçersiz abonelikler (404/410) otomatik temizlenir.
+- **Dinlenme zamanlayıcısı:** Bugün ekranında 60 sn / 90 sn / 2 dk / 3 dk düğmeleri; bildirim sunucusu açıksa süre dolunca sunucu telefona bildirim gönderir (zamanlayıcılar sunucu bellekte tutulur, en çok 15 dk; sunucu yeniden başlarsa o anki sayaç bildirimsiz kalır). Uygulama ekranda açıkken bildirim gösterilmez, ses ve titreşim yeterlidir.
 - **Sorun giderme:** "Deneme bildirimi gönder" düğmesi sunucudan cihaza tam yolu sınar. Gelmiyorsa tarayıcı/telefon ayarlarından bu site için bildirim iznini ve pil tasarrufunu kontrol et.
 
 ## Ürün kataloğu (milyonlarca ürün + restoran menüleri)
