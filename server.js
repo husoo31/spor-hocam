@@ -1003,6 +1003,16 @@ function cleanState(s) {
   return { date: /^\d{4}-\d{2}-\d{2}$/.test(String(s.date)) ? s.date : '', chk: !!s.chk, suppDone: !!s.suppDone, weigh: !!s.weigh, trainDone: !!s.trainDone, waterMl: Math.min(20000, Math.max(0, Number(s.waterMl) || 0)) };
 }
 const pushTestHits = new Map(), restTimers = new Map(), restHits = new Map();
+// "alarm" modu: süre dolunca bildirim, ardından kullanıcı durdurana (Durdur / bildirime dokunma / bildirimi kaydırma / uygulamayı açma) kadar
+// her REST_REPEAT_MS'de bir (en çok REST_REPEATS kez) tekrar gönderilir; web uygulaması telefonun yerel alarmı gibi sürekli çalamaz, en yakını budur.
+const REST_REPEAT_MS = Number(env.PUSH_REST_REPEAT_MS) || 20000, REST_REPEATS = 6;
+function ringRest(id, i, alarm) {
+  const cur = q.pushById.get(id); // abonelik bu arada silindiyse gönderme
+  if (!cur) { restTimers.delete(id); return; }
+  pushSend(cur, { title: '⏱ Dinlenme bitti', body: i ? `Sıradaki sete! (hatırlatma ${i})` : 'Sıradaki sete!', tag: 'sh-rest', alarm, n: i }, { ttl: 120, urgency: 'high' }).catch(() => {});
+  if (alarm && i < REST_REPEATS) { const t = setTimeout(() => ringRest(id, i + 1, true), REST_REPEAT_MS); t.unref(); restTimers.set(id, t); }
+  else restTimers.delete(id);
+}
 async function handlePush(req, res, user, p, m) {
   if (p === '/api/push/key' && m === 'GET') return send(res, 200, { key: vapid().publicKey, devices: q.pushUser.all(user.id).length });
   if (p === '/api/push/subscribe' && m === 'POST') {
@@ -1040,13 +1050,9 @@ async function handlePush(req, res, user, p, m) {
     const hits = (restHits.get(user.id) || []).filter(t => t > Date.now() - 3600000);
     if (hits.length >= 300) throw new HttpError(429, 'rate_limited', 'Çok sık zamanlayıcı kuruldu, biraz sonra tekrar dene.');
     restHits.set(user.id, [...hits, Date.now()]);
-    const id = row.id, t = setTimeout(async () => {
-      restTimers.delete(id);
-      const cur = q.pushById.get(id); // abonelik bu arada silindiyse gönderme
-      if (cur) await pushSend(cur, { title: '⏱ Dinlenme bitti', body: 'Sıradaki sete!', tag: 'sh-rest' }, { ttl: 120, urgency: 'high' });
-    }, sec * 1000);
+    const id = row.id, alarm = !!b.alarm, t = setTimeout(() => ringRest(id, 0, alarm), sec * 1000);
     t.unref(); restTimers.set(id, t);
-    return send(res, 200, { ok: true, scheduled: true, seconds: sec });
+    return send(res, 200, { ok: true, scheduled: true, seconds: sec, alarm });
   }
   if (p === '/api/push/test' && m === 'POST') {
     const h = (pushTestHits.get(user.id) || []).filter(t => t > Date.now() - 3600000);

@@ -143,6 +143,18 @@
     return `${Math.round(min)} dk · ${dist} · ${String(r1(km / (min / 60))).replace('.', ',')} km/sa`;
   }
 
+  /* ---------- kendi dinlenme süren: "75", "75 sn", "1:30", "2 dk", "1,5 dk", "1 dk 30 sn" → saniye (10 sn – 15 dk) ---------- */
+  function parseRest(text) {
+    const t = String(text == null ? '' : text).trim().toLowerCase().replace(',', '.');
+    let m, sec = null;
+    if ((m = /^(\d{1,2}):(\d{1,2})$/.exec(t))) sec = +m[2] < 60 ? +m[1] * 60 + +m[2] : null;
+    else if ((m = /^(\d+)\s*(?:dk|dak|dakika|m|min)\s*(\d+)\s*(?:sn|saniye|s|sec)?$/.exec(t))) sec = +m[1] * 60 + +m[2];
+    else if ((m = /^(\d+(?:\.\d+)?)\s*(?:dk|dak|dakika|m|min)$/.exec(t))) sec = Math.round(parseFloat(m[1]) * 60);
+    else if ((m = /^(\d+(?:\.\d+)?)\s*(?:sn|sny|saniye|s|sec)$/.exec(t))) sec = Math.round(parseFloat(m[1]));
+    else if ((m = /^(\d+(?:\.\d+)?)$/.exec(t))) { const v = parseFloat(m[1]); sec = Math.round(v < 10 ? v * 60 : v); } // yalın sayı: 10'un altı dakika, üstü saniye
+    return sec !== null && sec >= 10 && sec <= 900 ? sec : null;
+  }
+
   /* ---------- CSV (Excel TR için ; ayracı ve ondalık virgül; BOM indirirken eklenir) ---------- */
   function toCsv(headers, rows, sep) {
     sep = sep || ';';
@@ -156,5 +168,5 @@
     return [headers, ...rows].map(r => r.map(cell).join(sep)).join('\r\n') + '\r\n';
   }
 
-  return { CHK, readiness, readinessAdvice, deload, weightGoal, calorieAdjust, proteinPlan, cardioStat, CARDIO, toCsv, PRO_RANGE };
+  return { CHK, readiness, readinessAdvice, deload, weightGoal, calorieAdjust, proteinPlan, cardioStat, CARDIO, toCsv, parseRest, PRO_RANGE };
 });

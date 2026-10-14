@@ -55,7 +55,7 @@ const TZ = 'Europe/Istanbul';
 const parts = () => { const f = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); const p = Object.fromEntries(f.formatToParts(new Date()).map(x => [x.type, x.value])); return { date: `${p.year}-${p.month}-${p.day}`, hm: `${p.hour}:${p.minute}`, min: +p.hour * 60 + +p.minute }; };
 const minusMin = (n) => { const t = (parts().min - n + 1440) % 1440; return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
 
-const S1 = await start(18310, { PUSH_ALLOW_ANY: 'true', PUSH_TICK_MS: '300' });
+const S1 = await start(18310, { PUSH_ALLOW_ANY: 'true', PUSH_TICK_MS: '300', PUSH_REST_REPEAT_MS: '800' });
 const S2 = await start(18311, {}); // varsayılan: yalnızca bilinen push servisleri
 try {
   const c = call(S1.base), A = { c: '' }, B = { c: '' };
@@ -158,6 +158,20 @@ try {
   const rg = got.filter(x => x.url.startsWith('/push/rest'));
   ok(rg.length === 1 && rg[0].url === '/push/restx', 'dinlenme: yalnızca süresi dolan cihaza gitti; iptal edilen ve ileri alınan gitmedi');
   const rm = decrypt(rg[0].body, rx); ok(rm.title === '⏱ Dinlenme bitti' && rm.tag === 'sh-rest' && rg[0].headers.ttl === '120' && rg[0].headers.urgency === 'high', 'dinlenme bildirimi: şifreli yük, tag sh-rest, TTL 120, Urgency high');
+  // alarm modu: süre dolunca bildirim + durdurulana kadar tekrarlar; iptal zinciri keser
+  const al = subscriber('/push/alarm'), al2 = subscriber('/push/alarm2');
+  for (const x of [al, al2]) await c('POST', '/api/push/subscribe', { subscription: { endpoint: x.endpoint, keys: x.keys }, tz: TZ, cfg: { rem: {} }, state: stateNone }, A);
+  got.length = 0;
+  r = await c('POST', '/api/push/rest', { endpoint: al.endpoint, seconds: 5, alarm: true }, A); ok(r.j.alarm === true, 'alarm: istek alarm bayrağıyla zamanlandı');
+  await c('POST', '/api/push/rest', { endpoint: al2.endpoint, seconds: 5, alarm: false }, A);
+  await sleep(5000 + 2600);
+  const ag = got.filter(x => x.url === '/push/alarm'), ap = ag.map(x => decrypt(x.body, al));
+  ok(ag.length >= 3 && ap[0].n === 0 && ap[1].n === 1 && ap[2].n === 2, `alarm: süre dolunca bildirim + her 0,8 sn'de tekrar (n = ${ap.map(x => x.n).join(',')})`);
+  ok(ap.every(x => x.alarm === true && x.tag === 'sh-rest' && x.title === '⏱ Dinlenme bitti') && /hatırlatma 1/.test(ap[1].body) && ap[0].body === 'Sıradaki sete!', 'alarm: yük alarm:true, tag sh-rest; tekrarlarda "(hatırlatma N)" yazar');
+  ok(got.filter(x => x.url === '/push/alarm2').length === 1 && decrypt(got.find(x => x.url === '/push/alarm2').body, al2).alarm === false, 'alarm kapalıyken yalnızca tek bildirim gider (alarm:false)');
+  await c('POST', '/api/push/rest', { endpoint: al.endpoint, seconds: 0 }, A); const cnt = got.filter(x => x.url === '/push/alarm').length;
+  await sleep(2000); ok(got.filter(x => x.url === '/push/alarm').length <= cnt + 1, 'alarm: iptal (Durdur / bildirime dokunma / uygulamayı açma) tekrarları keser');
+  await sleep(3500); ok(got.filter(x => x.url === '/push/alarm').length <= cnt + 1, 'alarm: iptalden sonra tekrar gelmez (' + cnt + ' → ' + got.filter(x => x.url === '/push/alarm').length + ')');
 } finally {
   S1.srv.kill(); S2.srv.kill(); fake.close();
 }

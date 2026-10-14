@@ -63,6 +63,17 @@ ok(!c.target && c.delta === 300 && c.kcal === 3300, 'hedef kilo yoksa eski davra
 c = A.calorieAdjust({ ...T, weight: 70, target: 75, targetDate: '2026-10-10', goal: 'bulk' });
 ok(c.pastDue && c.target, 'geçmiş tarih işaretlenir');
 
+// kendi dinlenme süren
+const pr = A.parseRest;
+ok(pr('75') === 75 && pr('75 sn') === 75 && pr('75sn') === 75 && pr('75 saniye') === 75 && pr('75s') === 75, 'parseRest: 75 / 75 sn / 75sn / 75 saniye / 75s → 75 saniye');
+ok(pr('1:30') === 90 && pr('0:45') === 45 && pr('2:00') === 120 && pr('1:5') === 65, 'parseRest: dakika:saniye (1:30 = 90, 0:45 = 45, 1:5 = 65)');
+ok(pr('2 dk') === 120 && pr('2dk') === 120 && pr('1,5 dk') === 90 && pr('1.5 dakika') === 90 && pr('2 min') === 120, 'parseRest: dakika (2 dk, 1,5 dk, 2 min)');
+ok(pr('1 dk 30 sn') === 90 && pr('2 dk 15') === 135, 'parseRest: "1 dk 30 sn" = 90, "2 dk 15" = 135');
+ok(pr('3') === 180 && pr('2') === 120 && pr('9') === 540 && pr('10') === 10 && pr('90') === 90, 'parseRest: yalın sayı 10\'un altı dakika (3 = 3 dk), 10 ve üstü saniye (90 = 90 sn)');
+ok(pr('') === null && pr('abc') === null && pr('1:75') === null && pr('-5') === null && pr(null) === null && pr('1 saat') === null, 'parseRest: geçersiz girdiler null');
+ok(pr('9 sn') === null && pr('5 sn') === null && pr('16 dk') === null && pr('2000') === null && pr('0') === null, 'parseRest: 10 sn altı ve 15 dk üstü reddedilir');
+ok(pr('  75  SN ') === 75 && pr('1:30 ') === 90, 'parseRest: boşluk ve büyük harf toleransı');
+
 // protein
 let p = A.proteinPlan({ weightKg: 80, goal: 'cut', meals: [{ type: 'Kahvaltı', protein: 30 }, { type: 'Öğle', protein: 45 }, { type: 'Akşam', protein: 50 }, { type: 'Atıştırmalık', protein: 20 }], trained: false });
 ok(Math.abs(p.gkg - 145 / 80) < 1e-9 && p.status === 'ok' && p.spread === 'iyi' && p.strong === 4, 'iyi dağılmış 145 g / 80 kg = 1,81 g/kg → ok');
