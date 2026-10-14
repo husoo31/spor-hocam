@@ -94,5 +94,11 @@ window.CHANGELOG = [
       ['yeni', 'Set arası dinlenme süresi bitince bildirim: bildirim sunucusu açıksa sunucu süre dolunca telefona anında bildirim gönderir (ekran kilitliyken ve uygulama arka plandayken de), titreşimli.'],
       ['iyi', '+30 sn eklersen ya da Durdur dersen sunucudaki zamanlayıcı da güncellenir/iptal olur. Uygulama ekranda açıkken çift uyarı olmaması için bildirim gösterilmez (ses ve titreşim zaten çalar).'],
       ['iyi', 'Bildirim sunucusu kapalıysa: uygulama arka plandayken tarayıcı sayacı çalışıyorsa yerel bildirim gösterilir (telefon sayacı duraklatırsa gecikebilir; en sağlam yol bildirim sunucusunu açmak).']],
+    commits: [['5741363', '2026-10-14 01:03', 'Dinlenme bitince bildirim (v0.17)']] },
+  { v: 'v0.18', d: '2026-10-14 17:15', title: 'Kendi dinlenme süren ve alarm', items: [
+      ['yeni', 'Kendi dinlenme süren: antrenman kartındaki kutuya "75", "75 sn", "1:30", "2 dk" ya da "1 dk 30 sn" yazıp Başlat\'a bas (10 sn – 15 dk). Son yazdığın süre ↺ düğmesi olarak kalır; Enter ile de başlar.'],
+      ['yeni', 'Alarm gibi çalar: süre bitince uygulama açıkken Kapat\'a basana kadar (en çok 1 dk) tekrar tekrar bip; bildirim sunucusu açıkken kilitli ekranda 20 sn arayla en çok 7 kalıcı bildirim (uzun titreşim, ⏹ Durdur düğmesi). Durdur\'a basınca, bildirime dokununca ya da kaydırınca susar.'],
+      ['iyi', 'Tercihler > Hatırlatmalar\'da "Dinlenme alarmı" anahtarı: kapatırsan süre bitince tek uyarı gelir. Ekran açıkken sunucu bildirimleri otomatik durur, uygulamayı açınca ekrandaki dinlenme bildirimi kalkar.'],
+      ['iyi', 'Ses artık ilk dokunuşta hazırlanan tek bir ses bağlamıyla çalınır; telefonlarda süre bitince sesin çıkmama riskini azaltır. Web uygulaması telefonun yerel alarmı kadar kesintisiz çalamaz; kesin alarm için telefonun saatini kullan.']],
     commits: [] },
 ];

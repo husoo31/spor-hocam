@@ -37,15 +37,30 @@ self.addEventListener('push', e => {
       const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       if (cs.some(c => c.visibilityState === 'visible')) return;
     }
+    const rest = d.tag === 'sh-rest';
     await self.registration.showNotification(d.title || 'Spor Hocam', {
-      body: d.body || '', icon: '/icon-192.png', badge: '/icon-192.png', tag: d.tag || 'sh', renotify: d.tag === 'sh-rest',
-      vibrate: d.tag === 'sh-rest' ? [250, 120, 250, 120, 400] : undefined, data: { url: '/' } });
+      body: d.body || '', icon: '/icon-192.png', badge: '/icon-192.png', tag: d.tag || 'sh', renotify: rest, data: { url: '/' },
+      requireInteraction: !!d.alarm, // alarm modu: dokunulana ya da kapatılana kadar ekranda kalır
+      vibrate: rest ? (d.alarm ? [600, 200, 600, 200, 600, 200, 600, 200, 600] : [250, 120, 250, 120, 400]) : undefined,
+      actions: rest ? [{ action: 'stop', title: '⏹ Durdur' }] : undefined });
   })());
 });
+// dinlenme alarmını sustur: sunucudaki tekrar zincirini iptal eder
+async function cancelRest() {
+  try {
+    const sub = await self.registration.pushManager.getSubscription();
+    if (sub) await fetch('/api/push/rest', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'spor-hocam' }, body: JSON.stringify({ endpoint: sub.endpoint, seconds: 0 }) });
+  } catch (x) { /* ağ yok: tekrarlar kendiliğinden biter */ }
+}
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
+  const rest = e.notification.tag === 'sh-rest';
+  e.waitUntil((async () => {
+    if (rest) await cancelRest();
+    if (rest && e.action === 'stop') return; // "Durdur" düğmesi: yalnızca sustur, uygulamayı açma
+    const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const c of cs) if ('focus' in c) return c.focus();
     return self.clients.openWindow('/');
-  }));
+  })());
 });
+self.addEventListener('notificationclose', e => { if (e.notification.tag === 'sh-rest') e.waitUntil(cancelRest()); }); // bildirimi kaydırıp kapatmak da alarmı susturur

@@ -1017,22 +1017,37 @@ function restEl(){
   if(!el){el=document.createElement('div');el.id='restbar';el.setAttribute('role','timer');el.style.cssText='position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 74px);z-index:8;background:var(--ink);color:var(--bg);padding:10px 12px;border-radius:14px;font-size:15px;box-shadow:0 4px 16px rgba(0,0,0,.25);max-width:536px;margin:0 auto;display:none;align-items:center;gap:10px';document.body.appendChild(el)}
   return el;
 }
+// tek bir ses bağlamı: ilk dokunuşta (kullanıcı hareketiyle) açılır, böylece süre bitince telefonda da ses çalabilir
+let acx=null;
+function audioCtx(){try{const C=window.AudioContext||window.webkitAudioContext;if(!acx&&C)acx=new C();if(acx&&acx.state==='suspended')acx.resume();return acx}catch(e){return null}}
 function restBeep(){
   try{navigator.vibrate&&navigator.vibrate([250,120,250,120,400])}catch(e){}
-  try{const C=window.AudioContext||window.webkitAudioContext,c=new C();[0,.25,.5].forEach(t=>{const o=c.createOscillator(),g=c.createGain();o.frequency.value=880;g.gain.value=.15;o.connect(g);g.connect(c.destination);o.start(c.currentTime+t);o.stop(c.currentTime+t+.15)});setTimeout(()=>c.close(),1500)}catch(e){}
+  try{const c=audioCtx();if(c)[0,.25,.5].forEach(t=>{const o=c.createOscillator(),g=c.createGain();o.frequency.value=880;g.gain.value=.2;o.connect(g);g.connect(c.destination);o.start(c.currentTime+t);o.stop(c.currentTime+t+.15)})}catch(e){}
 }
+// alarm gibi: süre bitince Durdur/Kapat'a basılana kadar (en çok 1 dk) 1,5 sn arayla çalar; Tercihler'den kapatılabilir
+const restAlarmOn=()=>S.prefs.restAlarm!==false;
+let alarmT=null,restDoneAt=0;
+function alarmStop(){clearInterval(alarmT);alarmT=null;try{navigator.vibrate&&navigator.vibrate(0)}catch(e){}}
+function alarmStart(){alarmStop();restBeep();if(!restAlarmOn())return;let n=0;alarmT=setInterval(()=>{restBeep();if(++n>=40)alarmStop()},1500)}
 function restPaint(){
   const el=restEl(),left=Math.max(0,Math.ceil((restEnd-Date.now())/1000));
-  if(restEnd&&left<=0){clearInterval(restT);restT=null;restEnd=0;restBeep();if(document.hidden&&!(typeof PUSH!=='undefined'&&PUSH.on))notify('⏱ Dinlenme bitti','Sıradaki sete!');el.innerHTML=`<span class="grow"><b>⏱ Dinlenme bitti</b> — sıradaki sete!</span><button class="chip" style="margin:0" data-a="reststop">Kapat</button>`;el.style.display='flex';return}
+  if(restEnd&&left<=0){clearInterval(restT);restT=null;restEnd=0;restDoneAt=Date.now();alarmStart();if(!document.hidden)pushRest(0);else if(!(typeof PUSH!=='undefined'&&PUSH.on))notify('⏱ Dinlenme bitti','Sıradaki sete!',{requireInteraction:restAlarmOn(),renotify:true,tag:'sh-rest',vibrate:[600,200,600,200,600,200,600]});el.innerHTML=`<span class="grow"><b>⏱ Dinlenme bitti</b> — sıradaki sete!</span><button class="chip" style="margin:0" data-a="reststop">Kapat</button>`;el.style.display='flex';return}
   if(!restEnd){el.style.display='none';return}
   el.innerHTML=`<span class="grow">⏱ Dinlenme <b class="num" style="font-size:20px">${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}</b></span><button class="chip" style="margin:0" data-a="restadd">+30 sn</button><button class="chip" style="margin:0" data-a="reststop">Durdur</button>`;
   el.style.display='flex';
 }
 // bildirim sunucusu açıksa süre dolunca sunucu cihaza bildirim gönderir (ekran kilitliyken de); sec=0 iptal eder
-function pushRest(sec){if(typeof PUSH==='undefined'||!PUSH.on||!PUSH.ep)return;api('/push/rest',{method:'POST',body:{endpoint:PUSH.ep,seconds:sec}}).catch(()=>{})}
-function restStart(sec){restEnd=Date.now()+sec*1000;clearInterval(restT);restT=setInterval(restPaint,500);restPaint();pushRest(sec)}
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&restEnd)restPaint()});
-const restBar=()=>`<div class="row" style="gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center"><span class="mut small">⏱ Dinlenme:</span>${[[60,'60 sn'],[90,'90 sn'],[120,'2 dk'],[180,'3 dk']].map(([s,l])=>`<button class="chip" style="margin:0" data-a="rest" data-s="${s}">${l}</button>`).join('')}</div>`;
+function pushRest(sec){if(typeof PUSH==='undefined'||!PUSH.on||!PUSH.ep)return;api('/push/rest',{method:'POST',body:{endpoint:PUSH.ep,seconds:sec,alarm:restAlarmOn()}}).catch(()=>{})}
+function restStart(sec){alarmStop();audioCtx();restDoneAt=0;restEnd=Date.now()+sec*1000;clearInterval(restT);restT=setInterval(restPaint,500);restPaint();pushRest(sec)}
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden)return;
+  if(restEnd)restPaint();
+  if(restDoneAt&&Date.now()-restDoneAt<180000){pushRest(0);restDoneAt=0} // sunucudaki tekrarlar dursun
+  try{navigator.serviceWorker.ready.then(r=>r.getNotifications({tag:'sh-rest'}).then(ns=>ns.forEach(n=>n.close())))}catch(e){} // ekrandaki dinlenme bildirimini kaldır
+});
+const fmtRest=sec=>sec>=60&&sec%60===0?(sec/60)+' dk':sec>60?Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0'):sec+' sn';
+const restBar=()=>{const last=+S.prefs.restLast,pre=[60,90,120,180];return `<div class="row" style="gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center"><span class="mut small">⏱ Dinlenme:</span>${[[60,'60 sn'],[90,'90 sn'],[120,'2 dk'],[180,'3 dk']].map(([s,l])=>`<button class="chip" style="margin:0" data-a="rest" data-s="${s}">${l}</button>`).join('')}${last>=10&&!pre.includes(last)?`<button class="chip" style="margin:0" data-a="rest" data-s="${last}">↺ ${fmtRest(last)}</button>`:''}</div>
+  <div class="row" style="gap:6px;margin-top:8px;align-items:center"><input id="restc" data-i="restc" placeholder="kendi süren: 75 sn, 1:30, 2 dk" aria-label="Kendi dinlenme süren" autocomplete="off" style="flex:1;min-width:0"><button class="btn sm" data-a="restgo" style="min-width:76px">Başlat</button></div>`};
 
 /* hatırlatmalar: uygulama açıkken (ya da arka planda canlıyken) bildirim; kapalıyken gönderilemez (anlık bildirim sunucusu yok) */
 const REM_DEF=[['chk','🔋 Sabah kontrolü','Hazır oluş sorularını cevapla'],['supp','💊 Takviyeler','Takviyelerini almayı unutma'],['weigh','⚖ Tartılma','Bugün tartılma günün'],['train','🏋 Antrenman','Antrenman saatin geldi'],['water','💧 Su','Su içmeyi unutma']];
@@ -1052,8 +1067,8 @@ function remDue(now){
 }
 const remFired=key=>{try{return localStorage.getItem('sh-rem|'+key)==='1'}catch(e){return false}};
 const remMark=key=>{try{localStorage.setItem('sh-rem|'+key,'1')}catch(e){}};
-async function notify(title,body){
-  try{if(window.Notification&&Notification.permission==='granted'&&navigator.serviceWorker){const r=await navigator.serviceWorker.ready;await r.showNotification(title,{body,icon:'/icon-192.png',badge:'/icon-192.png',tag:title});return true}}catch(e){}
+async function notify(title,body,opts){
+  try{if(window.Notification&&Notification.permission==='granted'&&navigator.serviceWorker){const r=await navigator.serviceWorker.ready;await r.showNotification(title,{body,icon:'/icon-192.png',badge:'/icon-192.png',tag:title,...(opts||{})});return true}}catch(e){}
   toast(title+' — '+body,true);return false;
 }
 function remTick(){
@@ -1287,6 +1302,7 @@ function remCard(){
     ${REM_DEF.map(([k,l])=>k==='water'
       ?`<div class="row between" style="margin-top:10px"><label for="rm${k}" style="margin:0">${l}</label><select id="rm${k}" data-i="rem" data-k="water" style="width:auto"><option value="">Kapalı</option>${[1,2,3].map(h=>`<option value="${h}" ${+R.water===h?'selected':''}>Her ${h} saatte (09–21)</option>`).join('')}</select></div>`
       :`<div class="row between" style="margin-top:10px"><label for="rm${k}" style="margin:0">${l}</label><input id="rm${k}" type="time" data-i="rem" data-k="${k}" value="${esc(R[k]||'')}" style="width:auto"></div>${k==='weigh'?`<div class="row between" style="margin-top:6px"><label for="rmwd" style="margin:0">Tartılma günü</label><select id="rmwd" data-i="rem" data-k="weighDay" style="width:auto"><option value="">Seç</option>${[1,2,3,4,5,6,0].map(w=>`<option value="${w}" ${R.weighDay!==undefined&&R.weighDay!==''&&+R.weighDay===w?'selected':''}>${WD_NAME[w]}</option>`).join('')}</select></div>`:''}`).join('')}
+    ${toggleRow('restalarm','⏱ Dinlenme alarmı','Set arası süre bitince alarm gibi çalar: uygulama açıkken Kapat\'a basana kadar (en çok 1 dk) sesle; bildirim sunucusu açıkken kilitli ekranda da 20 sn arayla en çok 7 bildirim. Durdur\'a basınca, bildirime dokununca ya da kaydırınca susar.',restAlarmOn())}
     ${pushOk()?`<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><div><b>🔔 Bildirim sunucusu</b> <span class="small mut">· uygulama kapalıyken de</span></div>
       <p class="small mut" style="margin:6px 0 0">Sunucu, seçtiğin saatte ve yalnızca henüz yapmadığın işler için bu cihaza bildirim gönderir.</p>
       <p class="small" style="margin:8px 0 0">${PUSH.on?'✅ Bu cihazda açık.':'Bu cihazda kapalı.'}</p>
@@ -2574,9 +2590,16 @@ const A={
   cardiodel(ds){const d=getDay(V.date);if(d.cardio){d.cardio.splice(+ds.ix,1);if(!d.cardio.length)delete d.cardio;save(V.date);render()}},
   measopen(){V.measOpen=true;render();setTimeout(()=>{const f=document.getElementById('msbel');if(f)f.focus()},50)},
   measgo(){V.tab='today';V.date=TODAY;V.preview=null;V.measOpen=true;window.scrollTo(0,0);render()},
-  rest(ds){restStart(Math.max(10,Math.min(600,+ds.s||90)))},
+  rest(ds){restStart(Math.max(10,Math.min(900,+ds.s||90)))},
+  restgo(){
+    const sec=window.ATH&&ATH.parseRest((document.getElementById('restc')||{}).value);
+    if(!sec){toast('Süreyi şöyle yaz: 75 sn, 1:30 ya da 2 dk (10 sn – 15 dk).',true);return}
+    if(![60,90,120,180].includes(sec)){S.prefs.restLast=sec;persist('core')}
+    restStart(sec);
+  },
+  restalarm(){S.prefs.restAlarm=!restAlarmOn();persist('core');render()},
   restadd(){restEnd=Math.max(Date.now(),restEnd)+30000;if(!restT)restT=setInterval(restPaint,500);restPaint();pushRest(Math.ceil((restEnd-Date.now())/1000))},
-  reststop(){restEnd=0;clearInterval(restT);restT=null;restPaint();pushRest(0)},
+  reststop(){alarmStop();restDoneAt=0;restEnd=0;clearInterval(restT);restT=null;restPaint();pushRest(0)},
   injadd(){
     const a=(document.getElementById('injarea')||{}).value||'Diğer',n=String((document.getElementById('injnote')||{}).value||'').trim().slice(0,80);
     if(!S.plan)S.plan={days:{}};(S.plan.inj=S.plan.inj||[]).unshift({id:'i'+Date.now(),area:a,note:n,since:TODAY,on:true});persist('plan');render();
@@ -2795,6 +2818,7 @@ document.addEventListener('click',e=>{
   }
 });
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='exnew'){e.preventDefault();A.exadd();return}
+  if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='restc'){e.preventDefault();A.restgo();return}
   if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='pnew'){e.preventDefault();A.planadd(e.target.dataset);return}
   if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='bc'){e.preventDefault();A.bcsearch();return}
   if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('.hrow')){e.preventDefault();(A[e.target.dataset.a]||A.open)(e.target.dataset)}});
