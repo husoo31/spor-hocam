@@ -115,5 +115,10 @@ window.CHANGELOG = [
       ['yeni', 'Ürün aramada Türkiye\'de satılan ürünler öne alınır; dünya kataloğunda (--all) bile Fransız bir "ayran" Türk ürününün önüne geçmez. Restoran menüleri hepsinden önce gelir.'],
       ['iyi', 'Gerçek veriyle ölçüldü: Open Food Facts\'te Türkiye etiketli 7.867 üründen yalnızca ~1.200\'ünde besin değeri var (4.999\'unda kalori yok, 1.637\'sinin adı yok). Coca-Cola, Nutella, Oreo gibi uluslararası markalar için dünya kataloğu (node tools/build-catalog.mjs --all) önerilir.'],
       ['iyi', 'Eski katalog dosyaları (Türkiye sıralaması öncesi) yeniden kurulmadan da aranmaya devam eder.']],
+    commits: [['d158067', '2026-10-14 19:51', 'Katalogda Türkiye öncelikli sıralama (v0.21)']] },
+  { v: 'v0.22', d: '2026-10-21 22:05', title: 'Programı değiştir (gün takası)', items: [
+      ['yeni', 'Bugün ekranında antrenman kartının altında "🔁 Programı değiştir": başka günün antrenmanını yaptıysan o güne dokun (örn. bugün Pazartesi\'de Salı programını yaptın → Salı\'ya dokun). İki gün bu hafta için programlarını takas eder: bugün Salı programı, Salı da Pazartesi programı olur.'],
+      ['iyi', 'Antrenman kartı, hedefler (set × tekrar @ kg), "Hepsini programdaki gibi yaptım" ve program uyumu otomatik yeni güne göre çalışır. Girdiğin setler korunur; boş hareketler yeni programa göre yenilenir. Dinlenme günüyle de takas edilebilir.'],
+      ['iyi', 'Takas yalnızca o hafta (Pzt–Paz) için geçerlidir, ayarlardaki haftalık programın kendisi değişmez. "↩ Eski düzene döndür" ile geri alınır; geçmiş günlerde de kullanılabilir.']],
     commits: [] },
 ];

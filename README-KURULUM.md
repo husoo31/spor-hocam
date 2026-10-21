@@ -201,3 +201,6 @@ node tools/build-catalog.mjs --menus /data/menus --no-off    # yalnızca restora
 - **Restoran menüleri:** Açık bir restoran veri kümesi yoktur; zincirlerin **kendi yayımladığı** besin değeri tablolarını CSV'ye aktarırsın. `tools/menu-sablonu.csv` şablonunu `/data/menus/` içine (her restoran ayrı dosya olabilir) kopyalayıp doldur, sonra `node tools/build-catalog.mjs --no-off` (ya da yukarıdakilerden biri). Değerler porsiyon başınadır; tahmin yazma. Kalorisi makrolarla ±%35'ten fazla uyuşmayan satırlar atlanır ve araç kaç satırın atlandığını yazar.
 - **Lisans:** Open Food Facts verisi ODbL lisanslıdır (topluluk verisi; kaynak olarak belirtilir, değerler etiketle karşılaştırılmalıdır). Türetilmiş veritabanını başkalarına dağıtırsan aynı lisansla paylaşmalısın; yalnızca kendi sunucunda kullanmak serbesttir.
 
+## Programı değiştir (gün takası)
+Bugün ekranındaki **🔁 Programı değiştir** kartı, başka günün antrenmanını yaptığında iki günün programını **o hafta için** takas eder (`S.plan.over`: tarih → hangi haftanın gününün programı geçerli). Ayarlar → Program'daki haftalık program değişmez; takas pazartesi–pazar haftasıyla sınırlıdır ve "Eski düzene döndür" ile silinir. Girilmiş setler korunur. Sunucu tarafı antrenman hatırlatması haftanın gününe göre çalışmaya devam eder (takas hatırlatma gününü kaydırmaz).
+
