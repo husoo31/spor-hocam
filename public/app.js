@@ -838,7 +838,34 @@ function liftSumTxt(d){
 const WD_ORDER=[1,2,3,4,5,6,0];
 const WD_NAME=['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
 const planActive=()=>Object.values((S.plan&&S.plan.days)||{}).some(x=>x&&x.t==='train'&&(x.ex||[]).length>0);
-const planDay=d=>(S.plan&&S.plan.days&&S.plan.days[parseD(d).getDay()])||null;
+// o tarihte hangi haftanın gününün programı geçerli: normalde tarihin kendi günü; "Programı değiştir" ile iki gün bu hafta için yer değiştirebilir (S.plan.over)
+const planWd=d=>{const o=S.plan&&S.plan.over&&S.plan.over[d];return o!==undefined&&o!==null&&+o>=0&&+o<=6?+o:parseD(d).getDay()};
+const planDay=d=>(S.plan&&S.plan.days&&S.plan.days[planWd(d)])||null;
+const weekDates=d=>{const st=addDays(d,-((parseD(d).getDay()+6)%7));return Array.from({length:7},(_,i)=>addDays(st,i))}; // pazartesi başlangıçlı hafta
+const planLabel=d=>{const p=planDay(d);return p&&p.t==='train'&&(p.ex||[]).length?(p.name||'Antrenman')+' · '+p.ex.length+' hareket':'Dinlenme'};
+// plan değişince o günün antrenman kaydını yeni programa uydur: girilmiş set varsa korunur, boş hareketler yeni programa göre yenilenir
+function syncLiftToPlan(d){
+  const day=getDay(d),L=day.lift;if(!L)return;
+  if(!liftDone(L)){delete day.lift;save(d);return}
+  const want=planExercises(d);
+  L.ex=(L.ex||[]).filter(e=>(e.s||[]).some(x=>num(x.r)>0)||want.some(w=>normEx(w.n)===normEx(e.n)));
+  want.forEach(w=>{if(!L.ex.some(e=>normEx(e.n)===normEx(w.n)))L.ex.push(w)});
+  save(d);
+}
+function swapCard(d){
+  if(!planActive())return '';
+  const wk=weekDates(d),over=(S.plan&&S.plan.over)||{},changed=wk.some(x=>over[x]!==undefined);
+  const open=V.swapOpen;
+  let h=`<div class="card"><div class="row between"><h3>🔁 Programı değiştir</h3><button class="chip ${open?'on':''}" style="margin:0" data-a="swapopen">${open?'Kapat':'Gün seç'}</button></div>
+    <p class="mut small" style="margin:6px 0 0">${d===TODAY?'Bugün':esc(dlabel(d))} programda <b>${esc(planLabel(d))}</b> yazıyor. Başka günün antrenmanını yaptıysan seç; iki gün bu hafta için programlarını takas eder.</p>`;
+  if(open){
+    h+=`<div style="margin-top:10px">${wk.map(x=>{const cur=x===d,ov=over[x]!==undefined;
+      return `<button class="chip ${cur?'on':''}" style="display:block;width:100%;text-align:left;margin:6px 0 0;padding:10px 12px" data-a="swapday" data-d="${x}" ${cur?'disabled':''}><b>${esc(WD_NAME[parseD(x).getDay()])}</b> ${x===TODAY?'(bugün)':''}<span class="mut"> · ${esc(planLabel(x))}${ov?' · değiştirildi':''}</span>${cur?' · şu an':''}</button>`}).join('')}</div>
+    <p class="mut small" style="margin:8px 0 0">Örnek: bugün Salı programını yaptıysan <b>Salı</b>'ya dokun; bugün Salı'nın, Salı da bugünün programını alır.</p>`;
+  }
+  if(changed)h+=`<div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap;align-items:center"><span class="small" style="color:var(--carb)">Bu haftanın programı değiştirildi.</span><button class="chip" style="margin:0" data-a="swapreset">↩ Eski düzene döndür</button></div>`;
+  return h+'</div>';
+}
 // 'train' | 'rest' | null (program yok ya da program öncesi bir gün: her gün sorulur)
 function planKind(d){
   if(!planActive()||d<(S.plan.since||'0000-00-00'))return null;
@@ -1455,6 +1482,7 @@ function viewToday(){
   }
   h+=injBanner();
   h+=liftCard(d);
+  h+=swapCard(d);
   h+=cardioCard(d);
   h+=measCard(d);   // antrenman: yemek bölümünün (Ne yedin? ve Öğünler) altında
   h+=suppCard(d);
@@ -2570,6 +2598,22 @@ const A={
   plandel(ds){const p=planDays()[ds.w];if(!p||!p.ex)return;p.ex.splice(+ds.x,1);persist('plan');render()},
   planup(ds){const p=planDays()[ds.w],x=+ds.x;if(!p||!p.ex||x<1)return;[p.ex[x-1],p.ex[x]]=[p.ex[x],p.ex[x-1]];persist('plan');render()},
   wundo(){const d=getDay(V.date);if(d.water&&d.water.length){d.water.pop();save(V.date);render()}},
+  /* programı değiştir */
+  swapopen(){V.swapOpen=!V.swapOpen;render()},
+  swapday(ds){
+    const d=V.date,x=ds.d;if(!x||x===d||!weekDates(d).includes(x))return;
+    if(!S.plan)S.plan={days:{}};const o=S.plan.over=S.plan.over||{},wd=planWd(d),wx=planWd(x);
+    o[d]=wx;o[x]=wd; // iki gün birbirinin programını alır
+    [d,x].forEach(k=>{if(o[k]===parseD(k).getDay())delete o[k]}); // kendi gününe dönmüşse kaydı sil
+    Object.keys(o).forEach(k=>{if(k<addDays(TODAY,-90))delete o[k]});
+    persist('plan');syncLiftToPlan(d);syncLiftToPlan(x);V.swapOpen=false;
+    toast(`${WD_NAME[parseD(d).getDay()]} ile ${WD_NAME[parseD(x).getDay()]} günlerinin programı bu hafta için yer değiştirdi.`,true);render();
+  },
+  swapreset(){
+    const o=S.plan&&S.plan.over;if(!o)return;
+    weekDates(V.date).forEach(k=>delete o[k]);
+    persist('plan');weekDates(V.date).forEach(syncLiftToPlan);V.swapOpen=false;render();
+  },
   /* ürün arama */
   fsopen(){V.fs.open=!V.fs.open;V.fs.err='';render();if(V.fs.open)setTimeout(()=>{const f=document.getElementById('fsq');if(f)f.focus();fsRun()},50)},
   fspick(ds){
