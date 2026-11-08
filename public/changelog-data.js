@@ -131,5 +131,5 @@ window.CHANGELOG = [
       ['iyi', 'Apple Sağlık bağlıyken geçmiş günlerin yakılan kalorisi elle tamamlanabilir (kısayol o günü kaçırdıysa); bugünün değeri yine yalnızca Sağlık\'tan gelir, sunucu bugüne elle girişi reddeder.'],
       ['fix', 'Sağlık bağlıyken geçmiş güne girilen yakılan kalori "sync" olarak saklanır; Sağlık\'tan gelmiş gibi aynı şekilde görünür ve hesaplanır, sonraki Sağlık verisi gelirse üzerine yazar.'],
       ['fix', 'Yapay zekâ kapalıyken çıkan "Yiyeceği elle girebilirsin." ipucu artık yalnızca yemek bölümünde gösteriliyor; koç yorumu, antrenman analizi ve diğer yapay zekâ yerlerinde sadece "Yapay zekâ bu sunucuda ayarlanmamış." yazıyor.']],
-    commits: [] },
+    commits: [['fdee500', '2026-11-08 20:45', 'Kardiyo: otomatik mesafe/kalori + AI yorumu, yiyecek ipucu yalnizca yemekte (v0.23)']] },
 ];
