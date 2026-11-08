@@ -89,6 +89,11 @@ try {
   r = await sync(key, { kcal: 900 });
   ok(r.j.result === 'saved' && r.j.kcal === 900, 'Sağlık verisi yazılmaya devam ediyor');
 
+  // Sağlık bağlıyken geçmiş gün elle tamamlanabilir (bugün/gelecek hariç)
+  r = await call('POST', '/api/burn', { date: ymd(-2), kcal: 200 }, A);
+  ok(r.s === 200 && r.j.days[ymd(-2)].kcal === 200 && r.j.days[ymd(-2)].src === 'sync', 'geçmiş gün elle girilebiliyor ve Sağlık verisi gibi işaretleniyor');
+  ok((await call('POST', '/api/burn', { date: ymd(1), kcal: 100 }, A)).s === 409, 'gelecek güne elle giriş reddedildi (409)');
+
   // kullanıcılar ayrı; arayüzün yazdığı kayıtlar sunucu verisini bozmaz
   ok(Object.keys((await call('GET', '/api/burn', undefined, B)).j.days).length === 0, 'Bora Ali\'nin yakılan kalorisini görmüyor');
   await call('PUT', '/api/docs/core', { data: { profile: { weight: 80 } } }, A);

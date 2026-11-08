@@ -599,7 +599,7 @@ async function handleAi(req, res, user) {
     });
   }
   const chain = CHAINS[tier];
-  if (!aiEnabled()) throw new HttpError(503, 'ai_disabled', 'Yapay zekâ bu sunucuda ayarlanmamış. Yiyeceği elle girebilirsin.');
+  if (!aiEnabled()) throw new HttpError(503, 'ai_disabled', 'Yapay zekâ bu sunucuda ayarlanmamış.');
 
   const cacheKey = sha256(JSON.stringify([chain.map(c => c.provider + ':' + c.model), wantJson, prompt]));
   if (useCache && !images.length) {
@@ -614,10 +614,10 @@ async function handleAi(req, res, user) {
   const userLimit = user.ai_limit !== null && user.ai_limit !== undefined ? Number(user.ai_limit) : Number(getSetting('ai_user_limit'));
   if (mine >= userLimit)
     throw new HttpError(429, 'quota', userLimit === 0
-      ? 'Yapay zekâ bu hesapta kapalı. Yiyeceği elle girebilirsin.'
-      : `Bugünkü yapay zekâ hakkın doldu (${userLimit} çağrı). Yiyeceği elle girebilirsin; hak yarın yenilenir.`);
+      ? 'Yapay zekâ bu hesapta kapalı.'
+      : `Bugünkü yapay zekâ hakkın doldu (${userLimit} çağrı); hak yarın yenilenir.`);
   if (all >= Number(getSetting('ai_global_limit')))
-    throw new HttpError(429, 'quota', 'Bugünkü ortak yapay zekâ hakkı doldu. Yiyeceği elle girebilirsin; hak yarın yenilenir.');
+    throw new HttpError(429, 'quota', 'Bugünkü ortak yapay zekâ hakkı doldu; hak yarın yenilenir.');
   try {
     const out = await runChain(chain, prompt, images, wantJson, tier);
     q.usageInc.run(day, user.id);
@@ -633,7 +633,7 @@ async function handleAi(req, res, user) {
       ai_disabled: 'Yapay zekâ bu sunucuda ayarlanmamış.',
     };
     throw new HttpError(code === 'invalid_json' ? 502 : 503, code,
-      msgs[code] || 'Yapay zekâ servisi şu an yanıt vermiyor (günlük kota dolmuş olabilir). Yiyeceği elle girebilirsin.');
+      msgs[code] || 'Yapay zekâ servisi şu an yanıt vermiyor (günlük kota dolmuş olabilir).');
   }
 }
 
@@ -1330,15 +1330,17 @@ async function handleApi(req, res, url) {
     const s = readSleep(user.id);
     return send(res, 200, { days: s.days, last: s.last, info: s.info });
   }
-  if (p === '/api/burn' && m === 'POST') { // elle giriş (yalnızca Apple Sağlık bağlı değilken); kcal boşsa o günün kaydı silinir
+  if (p === '/api/burn' && m === 'POST') { // elle giriş; kcal boşsa o günün kaydı silinir
     const b = await readBody(req, 2000);
     const date = burnDate(b.date, 400), h = readHealth(user.id);
     if (b.kcal === null || b.kcal === '' || b.kcal === undefined) delete h.days[date];
     else {
-      if (user.sync_hash) throw new HttpError(409, 'sync_on', 'Apple Sağlık bağlıyken yakılan kalori elle girilemez; Sağlık\'tan çek. Elle girmek için Ayarlar → Sağlık\'tan bağlantıyı kapat.');
+      // Apple Sağlık bağlıyken bugünün değeri yalnızca Sağlık'tan gelir; geçmiş günler kısayol kaçırdıysa elle tamamlanabilir
+      if (user.sync_hash && date >= today()) throw new HttpError(409, 'sync_on', 'Apple Sağlık bağlıyken bugünün yakılan kalorisi elle girilemez; Sağlık\'tan çek. Geçmiş günler için elle giriş yapabilirsin.');
       const kcal = parseNum(b.kcal);
       if (!Number.isFinite(kcal) || kcal < 0 || kcal > 15000) throw new HttpError(400, 'bad_kcal', 'Yakılan kalori 0-15000 arasında bir sayı olmalı.');
-      h.days[date] = { kcal: Math.round(kcal), src: 'manual', ts: Date.now() };
+      // Sağlık bağlıyken geçmiş güne yapılan elle giriş de Sağlık verisi gibi davranır (aynı gösterim ve hesaplar)
+      h.days[date] = { kcal: Math.round(kcal), src: user.sync_hash ? 'sync' : 'manual', ts: Date.now() };
     }
     writeHealth(user.id, h);
     return send(res, 200, { days: h.days });

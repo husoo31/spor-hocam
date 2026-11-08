@@ -188,6 +188,12 @@ try {
   r = await reg(jar(), 'Hale', 'hale-sifre-777', 'master-kod');
   ok(r.s === 403 && r.j.code === 'full', 'kullanıcı sınırı ayarlardan değişti (5)');
 
+  /* ---- yakılan kalori: yönetici de görebilmeli (net kalori hesabı) ---- */
+  await call('POST', '/api/burn', { date: yesterday, kcal: 200 }, B);
+  r = await call('GET', `/api/admin/users/${boraId}/data`, undefined, A);
+  const hdoc = r.j.docs.find(x => x.id === 'health');
+  ok(hdoc && hdoc.data.days[yesterday].kcal === 200, 'yönetici, kullanıcının yakılan kalorisini de alıyor (panelde net kalori tutarlı)');
+
   /* ---- veri silme / hesap silme ---- */
   const cemId = (await call('GET', '/api/admin/overview', undefined, B)).j.users.find(u => u.username === 'Cem').id;
   await call('PUT', '/api/docs/core', { data: { profile: { x: 1 } } }, C);

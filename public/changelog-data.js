@@ -120,5 +120,16 @@ window.CHANGELOG = [
       ['yeni', 'Bugün ekranında antrenman kartının altında "🔁 Programı değiştir": başka günün antrenmanını yaptıysan o güne dokun (örn. bugün Pazartesi\'de Salı programını yaptın → Salı\'ya dokun). İki gün bu hafta için programlarını takas eder: bugün Salı programı, Salı da Pazartesi programı olur.'],
       ['iyi', 'Antrenman kartı, hedefler (set × tekrar @ kg), "Hepsini programdaki gibi yaptım" ve program uyumu otomatik yeni güne göre çalışır. Girdiğin setler korunur; boş hareketler yeni programa göre yenilenir. Dinlenme günüyle de takas edilebilir.'],
       ['iyi', 'Takas yalnızca o hafta (Pzt–Paz) için geçerlidir, ayarlardaki haftalık programın kendisi değişmez. "↩ Eski düzene döndür" ile geri alınır; geçmiş günlerde de kullanılabilir.']],
+    commits: [['875c9e5', '2026-10-21 22:02', 'Programı değiştir: iki günün programını o hafta için takas et (v0.22)']] },
+  { v: 'v0.23', d: '2026-11-08 19:50', title: 'Kardiyoda otomatik mesafe ve kalori', items: [
+      ['yeni', 'Kardiyo artık mesafe sormuyor: süre + hız (+ eğim) yazınca km kendisi hesaplanır (hız × süre). Hız boş bırakılırsa türün ortalaması kullanılır (koşu 8, yürüyüş 5, bisiklet 18, eliptik/diğer 6 km/sa).'],
+      ['yeni', 'Yakılan kalori tahmini MET/ACSM denklemleriyle (eğim ve kiloya göre) otomatik hesaplanır; yazarken "≈ km · ≈ kcal" önizlemesi canlı güncellenir. Yapay zekâ anahtarı gerekmez, aynı girdi hep aynı sonucu verir.'],
+      ['iyi', 'Kardiyo kalorisi yalnızca kardiyo kartında, 14 günlük kardiyo özetinde, CSV\'de ve koç yorumunda görünür; en üstteki kalori ekranına ve net kaloriye eklenmez — Apple Sağlık/Kısayollar aktif enerjisiyle çift sayılmaz.'],
+      ['yeni', 'Kardiyo yorumu Analiz → 🏋️ Antrenman → "Antrenmanımı yorumla" içine taşındı: son 14 günün kardiyo verisi (formülden gelen mesafe ve kalori dahil) aynı yorumda ayrı bir KARDİYO başlığıyla değerlendirilir; kardiyo için ayrı yapay zekâ düğmesi yok. Yapay zekâ sayıları yeniden hesaplamaz, sadece yorumlar. Koç yorumunun ilgili başlığı "ANTRENMAN VE KARDİYO" oldu.'],
+      ['iyi', 'Kardiyo formu sadeleşti: yalnızca süre, hız ve eğim soruluyor; nabız alanı kaldırıldı. Eski kayıtlardaki nabız listeye ve CSV\'ye yine yazılır.'],
+      ['iyi', 'Yönetici paneli kullanıcının yakılan kalorisini de gösterir; hedefe uyum, kullanıcının kendi ekranıyla aynı şekilde net kalori (yenen − yakılan) üzerinden hesaplanır.'],
+      ['iyi', 'Apple Sağlık bağlıyken geçmiş günlerin yakılan kalorisi elle tamamlanabilir (kısayol o günü kaçırdıysa); bugünün değeri yine yalnızca Sağlık\'tan gelir, sunucu bugüne elle girişi reddeder.'],
+      ['fix', 'Sağlık bağlıyken geçmiş güne girilen yakılan kalori "sync" olarak saklanır; Sağlık\'tan gelmiş gibi aynı şekilde görünür ve hesaplanır, sonraki Sağlık verisi gelirse üzerine yazar.'],
+      ['fix', 'Yapay zekâ kapalıyken çıkan "Yiyeceği elle girebilirsin." ipucu artık yalnızca yemek bölümünde gösteriliyor; koç yorumu, antrenman analizi ve diğer yapay zekâ yerlerinde sadece "Yapay zekâ bu sunucuda ayarlanmamış." yazıyor.']],
     commits: [] },
 ];

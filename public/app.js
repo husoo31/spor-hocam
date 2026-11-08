@@ -523,6 +523,9 @@ async function askJson(prompt,opts){
 }
 const ERRS={network:'Sunucuya ulaşılamıyor. İnternet bağlantını kontrol et.',image_rejected:'Fotoğraf okunamadı; daha net bir JPEG/PNG dene.',refused:'Bu istek yanıtlanamadı, farklı yaz.',invalid_json:'Cevap okunamadı, tekrar dene.'};
 const errMsg=e=>(e&&e.code&&ERRS[e.code])||(e&&e.message)||'Bir hata oldu, tekrar dene.';
+// "Yiyeceği elle girebilirsin" yalnızca yemek bölümünde gösterilir; diğer yapay zekâ yerlerinde sade mesaj kalır.
+const AI_ERR_CODES=['ai_disabled','quota','upstream_error','empty_completion','refused','invalid_json'];
+const foodErr=e=>errMsg(e)+(e&&AI_ERR_CODES.includes(e.code)?' Yiyeceği elle girebilirsin.':'');
 async function shrink(file){
   const bmp=await createImageBitmap(file);
   const sc=Math.min(1,1600/Math.max(bmp.width,bmp.height)),c=document.createElement('canvas');
@@ -983,6 +986,7 @@ const MEAS=[['bel','Bel','cm'],['gogus','Göğüs','cm'],['kol','Kol','cm'],['ka
 const INJ_AREAS=['Boyun','Omuz','Dirsek','Bilek / el','Sırt (üst)','Bel','Kalça','Diz','Ayak bileği / ayak','Kas gerilmesi','Diğer'];
 const badgesOf=(d,x)=>{const r=readyOf(d),cm=(x.cardio||[]).reduce((a,y)=>a+num(y.min),0);return (r?` · 🔋 ${r.score}`:'')+(cm?` · 🏃 ${r0(cm)} dk`:'')+(Object.keys(x.meas||{}).length?' · 📏':'')};
 const readyOf=d=>window.ATH?ATH.readiness(getDayRO(d).chk,(SL[d]||{}).asleep||0):null;
+const cardioWeight=()=>num(S.profile.weight)||num((weightPts(60).slice(-1)[0]||{}).v)||75;
 const lastMeas=(k,before)=>{for(let i=0;i<400;i++){const d=addDays(before||TODAY,-i),v=num((getDayRO(d).meas||{})[k]);if(v>0)return {d,v}}return null};
 const injActive=()=>((S.plan&&S.plan.inj)||[]).filter(x=>x&&x.on);
 function injBanner(){
@@ -1004,14 +1008,30 @@ function checkinCard(d){
   return `<div class="card"><div class="row between"><h3>🔋 ${who} nasılsın?</h3>${rd?`<button class="chip on" style="margin:0" data-a="chkopen">Tamam</button>`:''}</div>
     <p class="mut small" style="margin:4px 0 0">10 saniyelik kontrol; en az 3 soruyu cevapla, hazır oluş skorunu ve bugünkü antrenman önerisini göstereyim.</p>${q}</div>`;
 }
+function cdPreview(){
+  if(!window.ATH)return;
+  const eid=id=>document.getElementById(id);
+  const gv=id=>{const el=eid(id);return el&&!el.hidden?String(el.value||''):''};
+  const t=(eid('cdt')||{}).value||'Diğer',min=num(gv('cdm')),el=eid('cdpv');
+  if(!el)return;
+  if(!(min>0)){el.textContent='Süre ve hız girince mesafe ile tahmini kalori otomatik hesaplanır.';return}
+  const est=ATH.cardioEstimate({t,min,speed:num(gv('cds')),incline:num(gv('cdi')),weight:cardioWeight()});
+  const p=[];if(est.km>0)p.push(`≈ ${String(est.km).replace('.',',')} km`);p.push(`≈ ${est.kcal} kcal`);
+  el.textContent=p.join(' · ')+' (tahmini; en üstteki kalori hesabına eklenmez)';
+}
 function cardioCard(d){
   if(!window.ATH)return '';
   const list=getDayRO(d).cardio||[],who=d===TODAY?'Bugün':dlabel(d);
+  const sel=ATH.CARDIO.includes(V.cdType)?V.cdType:ATH.CARDIO[0];
+  const all=['speed','incline'].map(k=>ATH.CARDIO_DETAIL[k]);
   return `<div class="card"><h3>🏃 ${who} kardiyo</h3>
-    ${list.length?list.map((x,i)=>`<div class="row between" style="margin-top:8px"><div><b>${esc(x.t)}</b> <span class="mut small num">${esc(ATH.cardioStat(x.t,x.min,x.km))}</span></div><button class="ghost" data-a="cardiodel" data-ix="${i}" aria-label="${esc(x.t)} kaydını sil">✕</button></div>`).join(''):'<p class="mut small" style="margin:6px 0 0">Koşu, yürüyüş, bisiklet gibi kardiyoyu buraya yaz.</p>'}
-    <div class="row" style="gap:6px;margin-top:10px;flex-wrap:wrap"><select id="cdt" aria-label="Kardiyo türü" style="flex:1.4;min-width:110px">${ATH.CARDIO.map(t=>`<option>${t}</option>`).join('')}</select>
-      <input id="cdm" inputmode="numeric" placeholder="dk" aria-label="Süre (dk)" style="flex:1;min-width:60px;text-align:center"><input id="cdk" inputmode="decimal" placeholder="km" aria-label="Mesafe (km), isteğe bağlı" style="flex:1;min-width:60px;text-align:center">
-      <button class="btn sm" data-a="cardioadd" style="min-width:64px">Ekle</button></div></div>`;
+    ${list.length?list.map((x,i)=>`<div class="row between" style="margin-top:8px"><div><b>${esc(x.t)}</b> <span class="mut small num">${esc(ATH.cardioStat(x.t,x.min,x.km,x))}</span></div><button class="ghost" data-a="cardiodel" data-ix="${i}" aria-label="${esc(x.t)} kaydını sil">✕</button></div>`).join(''):'<p class="mut small" style="margin:6px 0 0">Koşu, yürüyüş, bisiklet gibi kardiyoyu buraya yaz.</p>'}
+    <div class="row" style="gap:6px;margin-top:10px;flex-wrap:wrap"><select id="cdt" data-i="cdt" aria-label="Kardiyo türü" style="flex:1.4;min-width:110px">${ATH.CARDIO.map(t=>`<option ${t===sel?'selected':''}>${t}</option>`).join('')}</select>
+      <input id="cdm" data-i="cdcalc" inputmode="numeric" placeholder="dk" aria-label="Süre (dk)" style="flex:1;min-width:70px;text-align:center"></div>
+    <div class="row" id="cdextra" style="gap:6px;margin-top:6px;flex-wrap:wrap">${all.map(f=>`<input id="${f.k==='speed'?'cds':'cdi'}" data-cdf="${f.k}" data-i="cdcalc" inputmode="decimal" placeholder="${f.ph}" aria-label="${f.label} (${f.unit}), isteğe bağlı" title="${f.label} (${f.unit}), isteğe bağlı" style="flex:1;min-width:78px;text-align:center">`).join('')}
+      <button class="btn sm" data-a="cardioadd" style="min-width:84px">Ekle</button></div>
+    <div class="mut small" id="cdpv" style="margin-top:6px">Süre ve hız girince mesafe ile tahmini kalori otomatik hesaplanır.</div>
+    <p class="note">Kardiyo kalorisi yalnızca burada ve koç yorumunda görünür; en üstteki kalori hesabına/net kaloriye eklenmez. Kardiyo yorumu için Analiz → 🏋️ Antrenman → "Antrenmanımı yorumla".</p></div>`;
 }
 function measCard(d){
   const m=getDayRO(d).meas||{},has=Object.keys(m).length,open=V.measOpen||has>0;
@@ -1164,7 +1184,7 @@ function weekStats(off){
   const cd=days.flatMap(d=>getDayRO(d).cardio||[]),wp=days.map(d=>({d,v:num(getDayRO(d).weight)})).filter(x=>x.v>0);
   return {n,kcal:n?sum('kcal')/n:null,protein:n?sum('protein')/n:null,sess:days.filter(d=>liftDone(liftOf(d))).length,
     sleep:sl.length?sl.reduce((a,b)=>a+b,0)/sl.length:null,ready:rd.length?rd.reduce((a,b)=>a+b,0)/rd.length:null,
-    cMin:cd.reduce((a,x)=>a+num(x.min),0),cKm:cd.reduce((a,x)=>a+num(x.km),0),cN:cd.length,wChange:wp.length>=2?wp[wp.length-1].v-wp[0].v:null};
+    cMin:cd.reduce((a,x)=>a+num(x.min),0),cKm:cd.reduce((a,x)=>a+num(x.km),0),cKcal:cd.reduce((a,x)=>a+num(x.kcal),0),cN:cd.length,wChange:wp.length>=2?wp[wp.length-1].v-wp[0].v:null};
 }
 const dlt=(a,b,u,inv)=>{if(a===null||b===null||a===undefined||b===undefined)return '';const x=a-b;if(Math.abs(x)<(u==='%'?1:0.05)&&u!=='%')return '';const up=x>0;const good=inv?!up:up;return `<span class="small" style="color:${good?'var(--fat)':'var(--bad)'}">${up?'▲':'▼'} ${String(r1(Math.abs(x))).replace('.',',')}${u||''}</span>`};
 function weeklySummary(){
@@ -1180,7 +1200,7 @@ function weeklySummary(){
   else if(a.sess>0)say.push(`${a.sess} antrenman yaptın${pl?' (program: '+pl+')':''}.`);
   if(a.sleep!==null&&a.sleep<7*60)say.push(`Uyku ortalaman ${fmtDur(a.sleep)}; toparlanma için 7–9 saati hedefle.`);
   if(a.ready!==null&&a.ready<55)say.push(`Hazır oluş ortalaman ${r0(a.ready)}/100 — bu hafta yük ya da uykuyu gözden geçir.`);
-  if(a.cN)say.push(`Kardiyo: ${a.cN} seans, ${r0(a.cMin)} dk${a.cKm?`, ${fm(a.cKm)} km`:''}.`);
+  if(a.cN)say.push(`Kardiyo: ${a.cN} seans, ${r0(a.cMin)} dk${a.cKm?`, ${fm(a.cKm)} km`:''}${a.cKcal?`, ≈ ${r0(a.cKcal)} kcal`:''} (kardiyo kalorisi günlük net kaloriye eklenmez).`);
   return `<h2 style="margin-top:0">Haftalık özet</h2><div class="mut small" style="margin:-6px 0 8px">Son 7 gün · okların yanı önceki 7 güne göre fark</div>
     <div class="grid2">${tile('Ort. kalori',a.kcal===null?'–':r0(a.kcal),'kcal',dlt(a.kcal,b.kcal,'',true))}${tile('Ort. protein',a.protein===null?'–':r0(a.protein),'g',dlt(a.protein,b.protein,''))}
     ${tile('Antrenman',a.sess,'gün',dlt(a.sess,b.sess,''))}${tile('Uyku',a.sleep===null?'–':fmtDur(a.sleep),'',a.sleep!==null&&b.sleep!==null?dlt(a.sleep/60,b.sleep/60,' sa'):'')}
@@ -1281,9 +1301,9 @@ function cardioStatsCard(){
   if(!mins.some(v=>v>0))return '';
   const all=rd.flatMap(d=>getDayRO(d).cardio||[]),by={};all.forEach(x=>{by[x.t]=(by[x.t]||0)+num(x.min)});
   return `<div class="card"><h3>🏃 Kardiyo (14 gün)</h3>${barChart(mins.map(v=>r0(v)),rd.map(d=>dshort(d)),0,'var(--water)')}
-    <div class="mut small" style="margin-top:6px">Bu hafta: <b class="num" style="color:var(--ink)">${a.cN}</b> seans · <b class="num" style="color:var(--ink)">${r0(a.cMin)}</b> dk${a.cKm?` · <b class="num" style="color:var(--ink)">${String(r1(a.cKm)).replace('.',',')}</b> km`:''}</div>
-    <div style="margin-top:6px">${Object.entries(by).map(([t,m])=>`<span class="chip">${esc(t)} <b class="num">${r0(m)} dk</b></span>`).join('')}</div>
-    <p class="note">Sağlık Kurumları yetişkinlere haftada en az 150 dk orta şiddette kardiyo önerir.</p></div>`;
+    <div class="mut small" style="margin-top:6px">Bu hafta: <b class="num" style="color:var(--ink)">${a.cN}</b> seans · <b class="num" style="color:var(--ink)">${r0(a.cMin)}</b> dk${a.cKm?` · <b class="num" style="color:var(--ink)">${String(r1(a.cKm)).replace('.',',')}</b> km`:''}${a.cKcal?` · ≈ <b class="num" style="color:var(--ink)">${r0(a.cKcal)}</b> kcal`:''}</div>
+    <div style="margin-top:6px">${Object.entries(by).map(([t,m])=>`<span class="chip">${esc(t)} <b class="num">${r0(m)} dk</b></span>`).join('')}${(()=>{const v=all.map(x=>num(x.incline)).filter(x=>x>0);return v.length?`<span class="chip">Ortalama eğim <b class="num">%${String(r1(v.reduce((a,b)=>a+b,0)/v.length)).replace('.',',')}</b></span>`:''})()}</div>
+    <p class="note">Sağlık Kurumları yetişkinlere haftada en az 150 dk orta şiddette kardiyo önerir. Kardiyo kalorisi yalnızca burada ve koç yorumunda görünür; en üstteki kalori hesabına/net kaloriye eklenmez (Apple Sağlık aktif enerjisiyle çakışmasın diye).</p></div>`;
 }
 function proteinStatsCard(rd){
   if(!window.ATH)return '';
@@ -1301,7 +1321,26 @@ function proteinStatsCard(rd){
 function athleteObj(){
   const r=rirStats(14,0),ws=weekStats(0);
   return {sakatlik_agri:injActive().map(x=>x.area+(x.note?' ('+x.note+')':'')+' - '+x.since+' tarihinden beri'),hedef_kilo_kg:num(S.profile.tw)||null,hedef_tarih:S.profile.td||null,
-    rir_ortalama_son14gun:r.avg===null?null:r1(r.avg),hazir_olus_son7gun_ort:ws.ready===null?null:r0(ws.ready),ust_uste_antrenman_haftasi:trainWeeksStreak(),kardiyo_son7gun_dk:r0(ws.cMin)};
+    rir_ortalama_son14gun:r.avg===null?null:r1(r.avg),hazir_olus_son7gun_ort:ws.ready===null?null:r0(ws.ready),ust_uste_antrenman_haftasi:trainWeeksStreak(),kardiyo_son7gun_dk:r0(ws.cMin),kardiyo_son7gun_kcal:r0(ws.cKcal)};
+}
+function cardioObj(){
+  if(!window.ATH)return null;
+  const days=[];
+  for(let i=13;i>=0;i--){
+    const day=addDays(TODAY,-i),cd=getDayRO(day).cardio||[];
+    if(!cd.length)continue;
+    days.push({tarih:day,seanslar:cd.map(x=>({tur:x.t,sure_dk:num(x.min),
+      mesafe_km:num(x.km)||ATH.cardioDistance(x),
+      hiz_km_sa:num(x.speed)||null,
+      egim_yuzde:x.incline===undefined||x.incline===''?null:num(x.incline),
+      tahmini_kcal:num(x.kcal)||ATH.cardioBurn(Object.assign({},x,{weight:cardioWeight()}))}))});
+  }
+  if(!days.length)return null;
+  const a=weekStats(0),b=weekStats(1),by={};
+  days.forEach(d=>d.seanslar.forEach(s=>{by[s.tur]=(by[s.tur]||0)+s.sure_dk}));
+  return {bu_hafta:{seans:a.cN,dakika:r0(a.cMin),mesafe_km:r1(a.cKm),tahmini_kcal:r0(a.cKcal)},
+    gecen_hafta:{seans:b.cN,dakika:r0(b.cMin),mesafe_km:r1(b.cKm),tahmini_kcal:r0(b.cKcal)},
+    tur_dagilimi_dk:by,gunler:days};
 }
 function dlFile(name,text){
   const b=new Blob(['﻿'+text],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');
@@ -1316,6 +1355,11 @@ function csvRows(kind){
   if(kind==='lift'){
     const rows=[];days.forEach(d=>{const L=liftOf(d);if(L&&L.ex)L.ex.forEach(e=>(e.s||[]).forEach((s,j)=>{if(num(s.r)>0)rows.push([d,e.n,j+1,s.w===''||s.w==null?'':num(s.w),num(s.r),s.f?'evet':'',e.rir===undefined||e.rir===''?'':num(e.rir),r1(e1rm(num(s.w),num(s.r))),num(s.w)*num(s.r)])}))});
     return {h:['Tarih','Hareket','Set','Kilo (kg)','Tekrar','Tükeniş','RIR','Tahmini 1RM (kg)','Hacim (kg)'],rows};
+  }
+  if(kind==='cardio'){
+    const rows=[],withHr=days.some(d=>(getDayRO(d).cardio||[]).some(x=>num(x.hr)>0));
+    days.forEach(d=>(getDayRO(d).cardio||[]).forEach(x=>rows.push([d,x.t,num(x.min),x.km?num(x.km):'',x.speed?num(x.speed):'',x.incline!==undefined&&x.incline!==''?num(x.incline):'',...(withHr?[x.hr?num(x.hr):'']:[]),x.kcal?num(x.kcal):'',window.ATH?ATH.cardioStat(x.t,x.min,x.km,x):''])));
+    return {h:['Tarih','Tür','Süre (dk)','Mesafe (km)','Hız (km/sa)','Eğim (%)',...(withHr?['Ortalama nabız (atım/dk)']:[]),'Tahmini kalori (kcal)','Özet'],rows};
   }
   const rows=days.map(d=>{const x=getDayRO(d),t=totals(d),c=x.chk||{},rd=readyOf(d),m=x.meas||{},cd=x.cardio||[];
     return [d,x.weight?num(x.weight):'',x.meals&&x.meals.length?r0(t.kcal):'',x.meals&&x.meals.length?r1(t.protein):'',x.meals&&x.meals.length?r1(t.carbs):'',x.meals&&x.meals.length?r1(t.fat):'',waterSum(d)||'',burnOf(d)?r0(burnOf(d)):'',SL[d]?r1(SL[d].asleep/60):'',
@@ -1417,10 +1461,11 @@ function viewToday(){
       <div class="bar"><i style="width:${Math.max(0,Math.min(100,net/g.kcal*100))}%;background:${over?'var(--bad)':'var(--kcal)'}"></i></div>
       <div class="row between small mut" style="margin-top:8px"><span>Yenen <b class="num" style="color:var(--ink)">${r0(t.kcal)}</b></span>${burn?`<span>Yakılan <b class="num" style="color:var(--ink)">−${r0(burn)}</b></span><span>Net <b class="num" style="color:var(--ink)">${r0(net)}</b></span>`:''}<span>Hedef <b class="num" style="color:var(--ink)">${g.kcal}</b></span></div>
       <div style="margin-top:12px">${deficit!==null?`<span class="chip">${deficit>=0?'Kalori açığı':'Kalori fazlası'}: <b class="num">${Math.abs(r0(deficit))}</b> kcal <span class="mut">(harcama ~${r0(g.tdee+burn)})</span></span>`:''}${(()=>{const lbl=burn?`Yakılan ${r0(burn)} kcal · ${bd.src==='manual'?'elle':'Apple Sağlık'}${bd.steps?' · '+Number(bd.steps).toLocaleString('tr-TR')+' adım':''}`:'';
-        // Sağlık bağlıyken elle giriş yok: bugün için 🔥 düğmesi yakılan kaloriyi Sağlık'tan otomatik çeker; geçmiş günlerde yalnızca gösterim
-        if(HS.enabled)return d===TODAY?`<button class="chip" data-a="pullhealth">🔥 ${lbl||'Yakılan kalori ekle'}</button>`:`<span class="chip">🔥 ${lbl||'Yakılan: veri yok'}</span>`;
+        // Sağlık bağlıyken bugün elle giriş yok (yalnızca Sağlık'tan çek); geçmiş günlerde kısayol kaçırdıysa elle girilebilir
+        if(HS.enabled&&d===TODAY)return burn?`<span class="chip">🔥 ${lbl}</span>`:'';
+        if(HS.enabled)return `<button class="chip" data-a="burnedit" aria-expanded="${!!V.burnEdit}">🔥 ${lbl||'Geçmiş gün için yakılan kalori ekle'}</button>`;
         return `<button class="chip" data-a="burnedit" aria-expanded="${!!V.burnEdit}">🔥 ${lbl||'Yakılan kalori ekle'}</button>`})()}${HS.enabled&&d===TODAY?`<button class="chip" data-a="pullhealth">🔄 Sağlık'tan çek</button>`:''}${!HS.enabled&&d===TODAY?`<button class="chip" data-a="tab" data-t="settings" data-st="health">🍎 Sağlık'a bağla</button>`:''}</div>
-      ${V.burnEdit&&!HS.enabled?`<form data-f="burn" class="row" style="gap:8px;margin-top:10px" autocomplete="off"><input name="kcal" inputmode="numeric" placeholder="Yakılan kcal (aktif enerji)" aria-label="Yakılan kalori" value="${burn?r0(burn):''}"><button class="btn sm">Kaydet</button>${HB[d]?`<button type="button" class="btn alt sm" data-a="burndel">Sil</button>`:''}</form>`:''}
+      ${V.burnEdit&&(!HS.enabled||d!==TODAY)?`<form data-f="burn" class="row" style="gap:8px;margin-top:10px" autocomplete="off"><input name="kcal" inputmode="numeric" placeholder="Yakılan kcal (aktif enerji)" aria-label="Yakılan kalori" value="${burn?r0(burn):''}"><button class="btn sm">Kaydet</button>${HB[d]?`<button type="button" class="btn alt sm" data-a="burndel">Sil</button>`:''}</form>`:''}
     </div>
     <div class="card grid3">
       ${[['Protein',t.protein,g.protein,'var(--pro)'],['Karb.',t.carbs,g.carbs,'var(--carb)'],['Yağ',t.fat,g.fat,'var(--fat)']].map(([n,v,tg,c])=>`<div class="macro"><div class="mut small">${n}</div><div class="v num">${r0(v)}<span class="mut small"> /${tg}g</span></div>${bar(v/tg*100,c)}</div>`).join('')}
@@ -1840,7 +1885,7 @@ function viewLifts(){
     ${r.unit==='kg'?'<p class="note">Tahmini 1RM, Epley formülüyle (kg × (1 + tekrar/30)) hesaplanır; farklı kilo/tekrar kombinasyonlarını karşılaştırılabilir kılar. 12 tekrarın üstü 12 sayılır.</p>':''}</div>`;
 
   /* 6) Yapay zekâ ile ayrıntılı yorum */
-  h+=`<div class="card"><h3>Ayrıntılı yorum (yapay zekâ)</h3><p class="mut small" style="margin:4px 0 10px">Programını, uyumunu, hareketlerindeki gelişimi ve haftalık hacmini birlikte yorumlayıp somut öneriler verir.</p>
+  h+=`<div class="card"><h3>Ayrıntılı yorum (yapay zekâ)</h3><p class="mut small" style="margin:4px 0 10px">Programını, uyumunu, hareketlerindeki gelişimi, haftalık hacmini ve kardiyo verilerini birlikte yorumlayıp somut öneriler verir.</p>
     <button class="btn full" data-a="liftcoach" ${V.liftCoachBusy?'disabled':''}>${V.liftCoachBusy?'Analiz ediyorum…':'Antrenmanımı yorumla'}</button>
     ${V.liftCoach?`<div class="coach" style="margin-top:12px">${esc(V.liftCoach)}</div>`:''}</div>`;
   return h;
@@ -2028,7 +2073,7 @@ function setData(){
     <p class="small mut" style="margin:6px 0">${col&&!dbErr?'Verilerin sunucudaki veritabanında hesabına bağlı olarak saklanıyor. Ayrıca bu cihazda da bir kopya tutuluyor; bağlantı kopsa bile kayıt girebilirsin, internet gelince eşitlenir.':'Sunucuya şu an ulaşılamıyor; veriler bu cihazda tutuluyor ve bağlantı gelince otomatik eşitlenecek.'}</p>
     <p class="small mut" style="margin:0 0 10px">${nDays} günlük kayıt · ${S.supps.length} takviye · ${S.lib.length} kayıtlı ürün</p>
     <div class="btnrow"><button class="btn alt sm" data-a="backup">Yedeği indir (JSON)</button><label class="btn alt sm filebtn" style="color:var(--ink)">Yedekten yükle<input type="file" accept=".json,application/json" data-i="import" style="display:none"></label></div></div>`;
-  h+=`<div class="card"><h3>Excel / CSV olarak indir</h3><p class="small mut" style="margin:4px 0 8px">Excel ve Google Sheets'te açılır (ayraç ; ve ondalık virgül).</p><div class="btnrow"><button class="btn alt sm" data-a="csv" data-t="daily">Günlük özet</button><button class="btn alt sm" data-a="csv" data-t="food">Yemekler</button><button class="btn alt sm" data-a="csv" data-t="lift">Antrenman</button></div></div>`;
+  h+=`<div class="card"><h3>Excel / CSV olarak indir</h3><p class="small mut" style="margin:4px 0 8px">Excel ve Google Sheets'te açılır (ayraç ; ve ondalık virgül).</p><div class="btnrow"><button class="btn alt sm" data-a="csv" data-t="daily">Günlük özet</button><button class="btn alt sm" data-a="csv" data-t="food">Yemekler</button><button class="btn alt sm" data-a="csv" data-t="lift">Antrenman</button><button class="btn alt sm" data-a="csv" data-t="cardio">Kardiyo</button></div></div>`;
   h+=`<div class="card"><h3>Yönetici erişimi</h3><p class="small mut" style="margin:4px 0 6px">Bu sunucunun yöneticisi kayıtlı verilerini (yemek, kilo, takviye) görebilir. Hesabını doğrudan etkileyen işlemler (şifre sıfırlama, veri silme gibi) aşağıda görünür.</p>${V.accessLog?(V.accessLog.length?V.accessLog.slice(0,15).map(x=>`<div class="meal"><div class="grow small"><b>${esc(x.admin)}</b> ${esc(ADM_ACT[x.action]||x.action)}</div><span class="mut small">${fmtTs(x.ts)}</span></div>`).join(''):'<div class="small mut">Gösterilecek işlem yok.</div>'):'<div class="small mut">Yükleniyor…</div>'}</div>`;
   if(S.lib.length)h+=`<div class="card"><h3>Ürünlerim</h3><p class="mut small" style="margin:4px 0 6px">Kaydettiğin doğrulanmış yiyecekler. Yazdığın metinde adı geçerse bu değerler aynen kullanılır.</p>${S.lib.map(x=>`<div class="meal"><div class="grow"><div>${esc(x.name)}</div><div class="mut small">${f1(x.g)} g · ${r0(x.n.kcal||0)} kcal · ${nSummary(x.n)}</div></div><button class="ghost" data-a="ldel" data-id="${x.id}" aria-label="Sil">✕</button></div>`).join('')}</div>`;
   h+=`<div class="card warn"><h3>Tüm verilerimi sil</h3><p class="small" style="margin:6px 0 0">Yemek, su, takviye, profil ve ürün kayıtların silinir; hesabın kalır. Geri alınamaz.</p>
@@ -2146,10 +2191,11 @@ const fmtTs=ts=>{if(!ts)return '—';const d=new Date(ts);return d.toLocaleDateS
 const fmtBytes=n=>n>=1048576?(n/1048576).toFixed(1).replace('.',',')+' MB':n>=1024?r0(n/1024)+' KB':n+' B';
 let AV=null;   // yönetici panelinde görüntülenen kullanıcının verisi (salt okunur kopya)
 function parseDocs(docs){
-  const o={profile:{},goals:{},supps:[],months:{}};
+  const o={profile:{},goals:{},supps:[],months:{},health:{days:{},last:null}};
   (docs||[]).forEach(d=>{
     const data=d.data||{};
     if(d.id==='core'){o.profile=data.profile||{};o.goals=data.goals||{};o.supps=data.supps||[]}
+    else if(d.id==='health'){o.health={days:data.days||{},last:data.last||null}}
     else if(d.id.startsWith('m-')){
       const key=d.id.slice(2).split('.')[0],m=o.months[key]||(o.months[key]={days:{}});
       Object.assign(m.days,data.days||{});
@@ -2158,13 +2204,15 @@ function parseDocs(docs){
   return o;
 }
 const avDay=d=>((AV&&AV.months[d.slice(0,7)])||{days:{}}).days[d]||{meals:[]};
+const avBurn=d=>num(((((AV&&AV.health&&AV.health.days)||{})[d])||{}).kcal);
 function avTotals(d){
   const day=avDay(d),t={},st={};
   NK.forEach(k=>{t[k]=0;st[k]=0});
   (day.meals||[]).forEach(m=>NK.forEach(k=>t[k]+=num(m[k])));
   Object.values(day.sup||{}).forEach(s=>NK.forEach(k=>st[k]+=num((s.n||{})[k])*num(s.c)));
   NK.forEach(k=>t[k]+=st[k]);
-  return {t,st,day};
+  const burn=avBurn(d);
+  return {t,st,day,burn,net:t.kcal-burn};
 }
 const avWater=d=>(avDay(d).water||[]).reduce((a,b)=>a+num(b),0);
 const admPwField=id=>`<div style="margin-top:8px"><label for="${id}">Yönetici şifren</label><div class="row" style="gap:4px"><input id="${id}" name="adminPassword" type="password" autocomplete="current-password" required><button type="button" class="ghost" data-a="pwtog" data-t="${id}" aria-label="Göster/gizle">👁</button></div></div>`;
@@ -2176,16 +2224,20 @@ async function admLoad(){
 function admDayView(){
   const u=V.adm.ud;
   if(!u)return '<div class="empty">Yükleniyor…</div>';
-  const d=V.adm.date,{t,st,day}=avTotals(d),g=AV.goals||{},p=AV.profile||{},meals=day.meals||[];
+  const d=V.adm.date,{t,st,day,burn,net}=avTotals(d),g=AV.goals||{},p=AV.profile||{},meals=day.meals||[];
   const ww=avWater(d),wgoal=g.water||(num(p.weight)?r0(num(p.weight)*35/50)*50:0);
+  const bd=((AV.health&&AV.health.days)||{})[d]||{};
+  const left=g.kcal?g.kcal-net:0,over=left<0;
   let h=`<div class="top"><button class="ghost" data-a="admday" data-n="-1" aria-label="Önceki gün">‹</button>
     <div class="d dp"><div>${dlabel(d)} <span class="mut" style="font-weight:400">▾</span></div><div class="mut small" style="font-weight:400">${dfull(d)}</div><input type="date" data-i="admdate" max="${TODAY}" value="${d}" aria-label="Tarih seç"></div>
     <button class="ghost" data-a="admday" data-n="1" aria-label="Sonraki gün" ${d>=TODAY?'disabled style="opacity:.3"':''}>›</button></div>`;
-  if(!meals.length&&!ww&&!Object.keys(day.sup||{}).length&&!day.weight)h+=`<div class="empty">${esc(u.username)} bu gün için kayıt girmemiş.</div>`;
+  if(!meals.length&&!ww&&!Object.keys(day.sup||{}).length&&!day.weight&&!burn)h+=`<div class="empty">${esc(u.username)} bu gün için kayıt girmemiş.</div>`;
   else{
     h+=`<div class="card"><div class="row between"><div><div class="mut small">Yenen</div><div class="num" style="font-size:34px;font-weight:700;line-height:1">${r0(t.kcal)}<span class="mut small"> kcal</span></div></div>
-      <div style="text-align:right" class="mut small">${g.kcal?`hedef ${g.kcal} kcal<br>${t.kcal<=g.kcal?'kalan '+r0(g.kcal-t.kcal):'<span style="color:var(--bad)">'+r0(t.kcal-g.kcal)+' fazla</span>'}`:'hedef yok'}</div></div>
-      ${g.kcal?`<div class="bar"><i style="width:${Math.min(100,t.kcal/g.kcal*100)}%;background:${t.kcal>g.kcal?'var(--bad)':'var(--kcal)'}"></i></div>`:''}
+      <div style="text-align:right" class="mut small">${g.kcal?`hedef ${g.kcal} kcal<br>${over?'<span style="color:var(--bad)">'+r0(net-g.kcal)+' fazla</span>':'kalan '+r0(left)}`:'hedef yok'}</div></div>
+      ${g.kcal?`<div class="bar"><i style="width:${Math.max(0,Math.min(100,net/g.kcal*100))}%;background:${over?'var(--bad)':'var(--kcal)'}"></i></div>`:''}
+      <div class="row between small mut" style="margin-top:8px"><span>Yenen <b class="num" style="color:var(--ink)">${r0(t.kcal)}</b></span>${burn?`<span>Yakılan <b class="num" style="color:var(--ink)">−${r0(burn)}</b></span><span>Net <b class="num" style="color:var(--ink)">${r0(net)}</b></span>`:''}<span>Hedef <b class="num" style="color:var(--ink)">${g.kcal||'—'}</b></span></div>
+      ${burn?`<div class="mut small" style="margin-top:6px">🔥 Yakılan ${r0(burn)} kcal${bd.src?` · ${bd.src==='manual'?'elle':'Apple Sağlık'}`:''}${bd.steps?' · '+Number(bd.steps).toLocaleString('tr-TR')+' adım':''}</div>`:''}
       <div class="grid3" style="margin-top:12px">${[['Protein',t.protein,g.protein,'var(--pro)'],['Karb.',t.carbs,g.carbs,'var(--carb)'],['Yağ',t.fat,g.fat,'var(--fat)']].map(([n,v,tg,c])=>`<div class="macro"><div class="mut small">${n}</div><div class="v num" style="font-size:20px">${r0(v)}<span class="mut small">${tg?' /'+tg:''}g</span></div>${tg?bar(v/tg*100,c):''}</div>`).join('')}</div>
       <div class="mut small" style="margin-top:10px">💧 ${(ww/1000).toFixed(2).replace('.',',')} L${wgoal?` / ${(wgoal/1000).toFixed(1).replace('.',',')} L`:''}${day.weight?` · ⚖ ${f1(day.weight)} kg`:''}</div></div>`;
     MEAL_TYPES.forEach(gn=>{
@@ -2197,8 +2249,8 @@ function admDayView(){
     if(g.kcal&&(meals.length||sups.length))h+=`<div class="card"><h3>Vitamin ve mineraller</h3>${nGroups(t,st,nTargets(p,g))}</div>`;
   }
   /* son 14 gün */
-  const rows=[];for(let i=0;i<14;i++){const x=addDays(TODAY,-i),tt=avTotals(x);if(tt.day.meals&&tt.day.meals.length||avWater(x))rows.push({d:x,k:tt.t.kcal,p:tt.t.protein,w:avWater(x)})}
-  if(rows.length)h+=`<h2>Son günler</h2><div class="card" style="padding:4px 14px">${rows.map(r=>`<div class="hrow" data-a="admpick" data-d="${r.d}" role="button" tabindex="0"><div style="min-width:74px"><b>${dmid(r.d)}</b></div><div class="grow num">${r0(r.k)} kcal · P ${r0(r.p)}g${r.w?` · 💧 ${(r.w/1000).toFixed(1).replace('.',',')} L`:''}</div><span class="mut">›</span></div>`).join('')}</div>`;
+  const rows=[];for(let i=0;i<14;i++){const x=addDays(TODAY,-i),tt=avTotals(x);if(tt.day.meals&&tt.day.meals.length||avWater(x)||tt.burn)rows.push({d:x,k:tt.net,p:tt.t.protein,w:avWater(x),y:tt.t.kcal,b:tt.burn})}
+  if(rows.length)h+=`<h2>Son günler</h2><div class="card" style="padding:4px 14px">${rows.map(r=>`<div class="hrow" data-a="admpick" data-d="${r.d}" role="button" tabindex="0"><div style="min-width:74px"><b>${dmid(r.d)}</b></div><div class="grow num">${r0(r.k)} kcal${r.b?` <span class="mut" style="font-weight:400">(yenen ${r0(r.y)}, yakılan ${r0(r.b)})</span>`:''} · P ${r0(r.p)}g${r.w?` · 💧 ${(r.w/1000).toFixed(1).replace('.',',')} L`:''}</div><span class="mut">›</span></div>`).join('')}</div>`;
   return h;
 }
 function admUserManage(u){
@@ -2431,7 +2483,7 @@ const A={
       const fb=await offlineFallback(txt,e,imgs.length);
       if(fb){V.preview=[...fb.items.map(toPreviewFood),...drinks];V.pnotes=fb.notes;V.err=''}
       else if(drinks.length){V.preview=drinks;V.pnotes=['İçecekler hesaplandı; yazdığın diğer yiyecekler hesaplanamadı ('+(V.err||errMsg(e))+'). Onları tekrar dene ya da elle ekle.'];V.err=''}
-      else V.err=V.err||errMsg(e);
+      else V.err=V.err||foodErr(e);
     }
     V.busy=false;render();
   },
@@ -2550,8 +2602,9 @@ const A={
         ...athleteObj(),
         program_uyumu_son4hafta:ad?ad.map(x=>({hafta_once:x.w,planli:x.planned,yapilan:x.done,atlanan:x.skipped,bos:x.missed,ekstra:x.extra})):null,
         haftalik_hacim_kg_eskiden_yeniye:weeklyVolume(8).map(x=>x.v),
-        hareketler:rows.map(r=>({ad:r.name,birim:r.unit,son28gun_en_iyi:r1(r.cur),onceki28gun_en_iyi:r1(r.prv),degisim_yuzde:r.ch===null?null:r1(r.ch),rekor:r1(r.all),rekor_tarihi:r.prDay,antrenman_sayisi:r.n,duragan:r.plateau,son_5:r.x.s.slice(-5).map(q=>q.d+': '+q.sets.map(setTxt).join(' '))}))};
-      V.liftCoach=await ask(`Sen deneyimli ve dürüst bir kuvvet antrenörüsün. Aşağıdaki antrenman verilerini analiz et ve Türkçe yaz.\n\nVeri (JSON; birim "kg" ise değerler tahmini 1RM kg cinsindendir, Epley formülü; "tekrar" ise ağırlıksız harekette en iyi set tekrarıdır; haftalık hacim = kg × tekrar toplamı; setlerdeki 🔥 işareti tükenişe gidilen setti: tükeniş setleri güç ve zorluk için en güvenilir göstergedir, aynı kiloda tükeniş tekrarının artmasını güçlenme say):${JSON.stringify(data)}\n\nŞu başlıklarla yaz (başlıkları BÜYÜK HARFLE yaz): GENEL DURUM (güçleniyor mu, gerileyen ya da durağan hareket var mı), BU HAFTA GEÇEN HAFTAYA GÖRE (haftalik_karsilastirma: ortalama güç değişimi yüzdesi, hacim ve antrenman günü; hareketlerden en çok ilerleyen ve gerileyen; "%10 güçlendin" gibi net ve sayılı yaz), PROGRAM HEDEFLERİ (program_hedefleri: hedef kilo/tekrar/set tutuldu mu, aşıldı mı, altında kaldı mı; hedefi artırılacak hareketler), HAREKET HAREKET (en önemli 3-5 hareketin gelişimi ve somut sayılar), PROGRAM UYUMU (program varsa uyum ve neden önemli; yoksa program girmeyi öner), DURAĞANLIK VE RİSKLER (durağan hareketler için olası nedenler: hacim, dinlenme, kalori/protein, uyku), SONRAKİ 2 HAFTA İÇİN 4 NET ADIM. Veri azsa ya da karşılaştırma için yetersizse bunu açıkça söyle, uydurma; sayılara dayan. Markdown işaretleri kullanma, düz metin olsun, en fazla 450 kelime. Tıbbi teşhis koyma; ağrı ya da sakatlık belirtisi görürsen uzmana danışmasını söyle.`,{modelTier:'complex',cache:false},false);
+        hareketler:rows.map(r=>({ad:r.name,birim:r.unit,son28gun_en_iyi:r1(r.cur),onceki28gun_en_iyi:r1(r.prv),degisim_yuzde:r.ch===null?null:r1(r.ch),rekor:r1(r.all),rekor_tarihi:r.prDay,antrenman_sayisi:r.n,duragan:r.plateau,son_5:r.x.s.slice(-5).map(q=>q.d+': '+q.sets.map(setTxt).join(' '))})),
+        kardiyo:cardioObj()};
+      V.liftCoach=await ask(`Sen deneyimli ve dürüst bir kuvvet ve kondisyon antrenörüsün. Aşağıdaki antrenman verilerini analiz et ve Türkçe yaz.\n\nVeri (JSON; birim "kg" ise değerler tahmini 1RM kg cinsindendir, Epley formülü; "tekrar" ise ağırlıksız harekette en iyi set tekrarıdır; haftalık hacim = kg × tekrar toplamı; setlerdeki 🔥 işareti tükenişe gidilen setti: tükeniş setleri güç ve zorluk için en güvenilir göstergedir, aynı kiloda tükeniş tekrarının artmasını güçlenme say; "kardiyo" alanı son 14 günün kardiyo seanslarıdır: mesafe hız × süre ile, tahmini_kcal MET/ACSM denklemiyle (eğim ve kilo dahil) hesaplanmış tahmindir, kesin ölçüm değildir ve günlük net kaloriye/Apple Sağlık aktif enerjisine DAHİL DEĞİLDİR; nabız verisi yoksa nabız üzerinden yorum yapma; kardiyo boşsa null):${JSON.stringify(data)}\n\nŞu başlıklarla yaz (başlıkları BÜYÜK HARFLE yaz): GENEL DURUM (güçleniyor mu, gerileyen ya da durağan hareket var mı), BU HAFTA GEÇEN HAFTAYA GÖRE (haftalik_karsilastirma: ortalama güç değişimi yüzdesi, hacim ve antrenman günü; hareketlerden en çok ilerleyen ve gerileyen; "%10 güçlendin" gibi net ve sayılı yaz), PROGRAM HEDEFLERİ (program_hedefleri: hedef kilo/tekrar/set tutuldu mu, aşıldı mı, altında kaldı mı; hedefi artırılacak hareketler), HAREKET HAREKET (en önemli 3-5 hareketin gelişimi ve somut sayılar), PROGRAM UYUMU (program varsa uyum ve neden önemli; yoksa program girmeyi öner), KARDİYO (yalnızca kardiyo verisi varsa: haftalık seans/süre/mesafe/tahmini kcal, haftada 150 dk hedefiyle karşılaştır, tür dağılımı, hız ve eğim; yoksa bu başlığı yazma), DURAĞANLIK VE RİSKLER (durağan hareketler için olası nedenler: hacim, dinlenme, kalori/protein, uyku), SONRAKİ 2 HAFTA İÇİN 4 NET ADIM. Veri azsa ya da karşılaştırma için yetersizse bunu açıkça söyle, uydurma; sayılara dayan. Markdown işaretleri kullanma, düz metin olsun, en fazla 500 kelime. Tıbbi teşhis koyma; ağrı ya da sakatlık belirtisi görürsen uzmana danışmasını söyle.`,{modelTier:'complex',cache:false},false);
     }catch(e){V.liftCoach=errMsg(e)}
     V.liftCoachBusy=false;render();
   },
@@ -2627,9 +2680,22 @@ const A={
   chk(ds){const d=getDay(V.date);d.chk=d.chk||{};if(+d.chk[ds.k]===+ds.v)delete d.chk[ds.k];else d.chk[ds.k]=+ds.v;if(!Object.keys(d.chk).length)delete d.chk;V.chkOpen=true;save(V.date);render()},
   chkopen(){V.chkOpen=!V.chkOpen;render()},
   cardioadd(){
-    const t=(document.getElementById('cdt')||{}).value||'Diğer',min=Math.round(num((document.getElementById('cdm')||{}).value)),km=num((document.getElementById('cdk')||{}).value);
+    const val=id=>String((document.getElementById(id)||{}).value||'').trim();
+    const t=(document.getElementById('cdt')||{}).value||'Diğer',min=Math.round(num(val('cdm')));
     if(!(min>=1&&min<=600)){toast('Süreyi dakika olarak yaz (1–600).',true);return}
-    const d=getDay(V.date);(d.cardio=d.cardio||[]).push(km>0&&km<=1000?{t,min,km:r1(km)}:{t,min});save(V.date);render();
+    const fk=(window.ATH?ATH.cardioFields(t):[]).map(f=>f.k),uses=k=>fk.includes(k);
+    const rawS=uses('speed')?val('cds'):'',rawI=uses('incline')?val('cdi'):'';
+    const sp=num(rawS),inc=num(rawI);
+    if(rawS!==''&&!(sp>0&&sp<=80)){toast('Hızı km/sa olarak yaz (0–80).',true);return}
+    if(rawI!==''&&!(inc>=0&&inc<=40)){toast('Eğimi % olarak yaz (0–40).',true);return}
+    // Mesafe ve kalori kullanıcıdan istenmez: hız × süre ile mesafe, MET/ACSM ile tahmini kalori hesaplanır.
+    const est=window.ATH?ATH.cardioEstimate({t,min,speed:rawS!==''?sp:0,incline:rawI!==''?inc:0,weight:cardioWeight()}):{km:0,kcal:0};
+    const e={t,min};
+    if(rawS!=='')e.speed=r1(sp);
+    if(rawI!=='')e.incline=r1(inc);
+    if(est.km>0)e.km=est.km;
+    if(est.kcal>0)e.kcal=est.kcal;
+    const d=getDay(V.date);(d.cardio=d.cardio||[]).push(e);save(V.date);render();
   },
   cardiodel(ds){const d=getDay(V.date);if(d.cardio){d.cardio.splice(+ds.ix,1);if(!d.cardio.length)delete d.cardio;save(V.date);render()}},
   measopen(){V.measOpen=true;render();setTimeout(()=>{const f=document.getElementById('msbel');if(f)f.focus()},50)},
@@ -2702,7 +2768,7 @@ const A={
     PUSH.msg=L.join('\n');render();
   },
   remtest(){notify('🔔 Deneme bildirimi','Hatırlatmalar böyle görünecek.')},
-  csv(ds){const r=csvRows(ds.t);dlFile('spor-hocam-'+({food:'yemekler',lift:'antrenman'}[ds.t]||'gunluk')+'-'+TODAY+'.csv',ATH.toCsv(r.h,r.rows))},
+  csv(ds){const r=csvRows(ds.t);dlFile('spor-hocam-'+({food:'yemekler',lift:'antrenman',cardio:'kardiyo'}[ds.t]||'gunluk')+'-'+TODAY+'.csv',ATH.toCsv(r.h,r.rows))},
   async photoadd(f,pose){
     try{
       const b=await shrink(f),rec={id:'p'+Date.now()+Math.random().toString(36).slice(2,6),d:TODAY,pose,t:Date.now(),blob:b};
@@ -2759,11 +2825,11 @@ const A={
     const g=S.goals,days=[];
     for(let i=13;i>=0;i--){
       const d=addDays(TODAY,-i),t=totals(d),dd=getDayRO(d);
-      if((dd.meals||[]).length||dd.weight||waterSum(d)||dd.lift||dd.chk||dd.cardio||dd.meas){const o={tarih:d,kilo:dd.weight||null,su_ml:waterSum(d),takviyeler:Object.values(dd.sup||{}).map(s=>s.name+' x'+s.c)};if(burnOf(d))o.yakilan_aktif_kcal=r0(burnOf(d));if(SL[d]){o.uyku_saat=r1(SL[d].asleep/60);if(SL[d].stages)o.derin_uyku_dk=SL[d].deep}if(dd.lift)o.antrenman=dd.lift.rest?'dinlenme':(dd.lift.ex||[]).map(e=>e.n+': '+(e.s||[]).filter(x=>num(x.r)>0).map(x=>(num(x.w)||'BW')+'x'+num(x.r)+(x.f?'(tükeniş)':'')).join(', '));{const rdy=readyOf(d);if(rdy)o.hazir_olus_0_100=rdy.score;if(dd.chk)o.sabah_kontrolu_1_5=dd.chk;if(dd.cardio)o.kardiyo=dd.cardio.map(x=>x.t+' '+x.min+' dk'+(x.km?' '+x.km+' km':''));if(dd.meas)o.vucut_olculeri=dd.meas}NK.forEach(k=>{if(t[k])o[k]=r1(t[k])});const st=suppTotals(d);o.takviyeden=Object.fromEntries(NK.map(k=>[k,r1(st[k])]).filter(([,v])=>v>0));days.push(o)}
+      if((dd.meals||[]).length||dd.weight||waterSum(d)||dd.lift||dd.chk||dd.cardio||dd.meas){const o={tarih:d,kilo:dd.weight||null,su_ml:waterSum(d),takviyeler:Object.values(dd.sup||{}).map(s=>s.name+' x'+s.c)};if(burnOf(d))o.yakilan_aktif_kcal=r0(burnOf(d));if(SL[d]){o.uyku_saat=r1(SL[d].asleep/60);if(SL[d].stages)o.derin_uyku_dk=SL[d].deep}if(dd.lift)o.antrenman=dd.lift.rest?'dinlenme':(dd.lift.ex||[]).map(e=>e.n+': '+(e.s||[]).filter(x=>num(x.r)>0).map(x=>(num(x.w)||'BW')+'x'+num(x.r)+(x.f?'(tükeniş)':'')).join(', '));{const rdy=readyOf(d);if(rdy)o.hazir_olus_0_100=rdy.score;if(dd.chk)o.sabah_kontrolu_1_5=dd.chk;if(dd.cardio){o.kardiyo=dd.cardio.map(x=>x.t+' '+x.min+' dk'+(x.km?' '+x.km+' km':'')+(x.speed?' hız '+x.speed+' km/sa':'')+(x.incline?' eğim %'+x.incline:'')+(x.hr?' nabız '+x.hr:'')+(x.kcal?' ≈'+x.kcal+' kcal':''));const ck=dd.cardio.reduce((a,x)=>a+num(x.kcal),0);if(ck)o.kardiyo_tahmini_kcal=ck}if(dd.meas)o.vucut_olculeri=dd.meas}NK.forEach(k=>{if(t[k])o[k]=r1(t[k])});const st=suppTotals(d);o.takviyeden=Object.fromEntries(NK.map(k=>[k,r1(st[k])]).filter(([,v])=>v>0));days.push(o)}
     }
     const snap=statsSnapshot();
     try{
-      V.coach=await ask(`Sen samimi ama dürüst, bilimsel bilgisi güçlü bir beslenme koçusun. Aşağıdaki son 14 günlük verileri analiz et ve Türkçe yaz.\n\nProfil: ${JSON.stringify(S.profile)}\nGünlük hedefler: ${JSON.stringify(g)} (yakilan_aktif_kcal varsa o gün Apple Sağlık/elle girilen aktif enerjidir; kalori hedefi yenenden bu miktar düşülerek, yani net kaloriyle karşılaştırılır; uyku_saat varsa o günün sabahı uyanılan gecenin uyku süresidir)\nBesin referans değerleri: ${JSON.stringify(nTargets())}\nGünlük kayıtlar (besin değerleri yiyecek + takviye toplamıdır; anahtarlar ve birimler: ${KEYDOC}; yazılmayan anahtar 0 demektir; "takviyeden" alanı sadece takviyelerin katkısı; "antrenman" alanı o günkü ağırlık antrenmanıdır, hareket: kilo x tekrar biçiminde, BW = vücut ağırlığı, "dinlenme" = dinlenme günü): ${JSON.stringify(days)}\nKilo trendi (kg/hafta, son 28 gün): ${snap.tr?r1(snap.tr.perWeek):'yok'}. Tahmini gerçek günlük harcama: ${snap.real?r0(snap.real):'hesaplanamadı'}. Su hedefi: ${waterGoal()} ml.\nSporcu bilgileri: ${JSON.stringify(athleteObj())} (rir = sette bırakılan tekrar; hazir_olus 0-100 öznel sabah kontrolü ve uykudan; sakatlık varsa önerilerini ona göre sınırla).\n\nŞu başlıklarla yaz: BESLENME (kalori, protein ve makro uyumu; yağ kalitesi, lif, şeker, sodyum), VİTAMİN VE MİNERALLER (takviyeler dahil hangileri eksik kalıyor, hangileri fazla veya üst sınıra yakın; takviye gerçekten gerekli mi yoksa yiyeceklerle mi kapanır), SU VE KİLO (su alışkanlığı, kilo trendi ve kalori açığı hedefle uyumlu mu, sürdürülebilir mi), ANTRENMAN (yalnızca antrenman verisi varsa: hangi hareketlerde güçlendiği, hangilerinin durağan kaldığı, set/tekrar dengesi; yoksa bu başlığı yazma), ÖNÜMÜZDEKİ HAFTA İÇİN 4 NET ADIM. Veri azsa ya da eksikse bunu açıkça söyle, uydurma; sayılara dayan. Besin değerlerinin yapay zekâ tahmini olduğunu ve eksik kayıt mikro besinleri düşük gösterebileceğini hesaba kat. Markdown işaretleri kullanma, başlıkları BÜYÜK HARFLE yaz, düz metin olsun, en fazla 320 kelime. Tıbbi teşhis koyma; takviye dozu üst sınıra yakınsa ya da olağandışı bir durum görürsen doktor/eczacıya danışmasını söyle.`,{modelTier:'complex',cache:false},false);
+      V.coach=await ask(`Sen samimi ama dürüst, bilimsel bilgisi güçlü bir beslenme koçusun. Aşağıdaki son 14 günlük verileri analiz et ve Türkçe yaz.\n\nProfil: ${JSON.stringify(S.profile)}\nGünlük hedefler: ${JSON.stringify(g)} (yakilan_aktif_kcal varsa o gün Apple Sağlık/elle girilen aktif enerjidir; kalori hedefi yenenden bu miktar düşülerek, yani net kaloriyle karşılaştırılır; uyku_saat varsa o günün sabahı uyanılan gecenin uyku süresidir)\nBesin referans değerleri: ${JSON.stringify(nTargets())}\nGünlük kayıtlar (besin değerleri yiyecek + takviye toplamıdır; anahtarlar ve birimler: ${KEYDOC}; yazılmayan anahtar 0 demektir; "takviyeden" alanı sadece takviyelerin katkısı; "antrenman" alanı o günkü ağırlık antrenmanıdır, hareket: kilo x tekrar biçiminde, BW = vücut ağırlığı, "dinlenme" = dinlenme günü; "kardiyo" alanı kardiyo seanslarıdır ve içindeki ≈ kcal tahmini kardiyo enerjisidir, günlük kalori hedefine/net kaloriye DAHİL DEĞİLDİR, Apple Sağlık aktif enerjisiyle çakışmasın diye ayrıca hesaplanmıştır): ${JSON.stringify(days)}\nKilo trendi (kg/hafta, son 28 gün): ${snap.tr?r1(snap.tr.perWeek):'yok'}. Tahmini gerçek günlük harcama: ${snap.real?r0(snap.real):'hesaplanamadı'}. Su hedefi: ${waterGoal()} ml.\nSporcu bilgileri: ${JSON.stringify(athleteObj())} (rir = sette bırakılan tekrar; hazir_olus 0-100 öznel sabah kontrolü ve uykudan; sakatlık varsa önerilerini ona göre sınırla).\n\nŞu başlıklarla yaz: BESLENME (kalori, protein ve makro uyumu; yağ kalitesi, lif, şeker, sodyum), VİTAMİN VE MİNERALLER (takviyeler dahil hangileri eksik kalıyor, hangileri fazla veya üst sınıra yakın; takviye gerçekten gerekli mi yoksa yiyeceklerle mi kapanır), SU VE KİLO (su alışkanlığı, kilo trendi ve kalori açığı hedefle uyumlu mu, sürdürülebilir mi), ANTRENMAN VE KARDİYO (yalnızca antrenman/kardiyo verisi varsa: hangi hareketlerde güçlendiği, hangilerinin durağan kaldığı, set/tekrar dengesi; kardiyoda süre, mesafe, eğim, hız ve tahmini kcal'i yorumla, kardiyo kalorisinin günlük net kaloriye dahil olmadığını hatırlat; yoksa bu başlığı yazma), ÖNÜMÜZDEKİ HAFTA İÇİN 4 NET ADIM. Veri azsa ya da eksikse bunu açıkça söyle, uydurma; sayılara dayan. Besin değerlerinin yapay zekâ tahmini olduğunu ve eksik kayıt mikro besinleri düşük gösterebileceğini hesaba kat. Markdown işaretleri kullanma, başlıkları BÜYÜK HARFLE yaz, düz metin olsun, en fazla 320 kelime. Tıbbi teşhis koyma; takviye dozu üst sınıra yakınsa ya da olağandışı bir durum görürsen doktor/eczacıya danışmasını söyle.`,{modelTier:'complex',cache:false},false);
     }catch(e){V.coach=(V.coach?V.coach+'\n\n':'')+errMsg(e)}
     V.coachBusy=false;render();
   },
@@ -2912,6 +2978,8 @@ document.addEventListener('input',e=>{
   const t=e.target,k=t.dataset&&t.dataset.i;if(!k)return;const ds=t.dataset;
   if(k==='food')V.food=t.value;
   else if(k==='mealtype')V.mealType=t.value;
+  else if(k==='cdt'){V.cdType=t.value;const keys=(window.ATH?ATH.cardioFields(t.value):[]).map(f=>f.k);document.querySelectorAll('#cdextra [data-cdf]').forEach(el=>{el.hidden=!keys.includes(el.dataset.cdf)});cdPreview()}
+  else if(k==='cdcalc')cdPreview();
   else if(k==='fsq'){V.fs.q=t.value;clearTimeout(fsT);fsT=setTimeout(fsRun,300)}
   else if(k==='stext')V.stext=t.value;
   else if(k==='bc')V.bc.code=t.value;

@@ -57,5 +57,20 @@ const padd = src.match(/\n {2}padd\(\)\{[\s\S]*?\n {2}\},/);
 ok(!!padd && /V\.preview\.forEach/.test(padd[0]), 'yemek önizleme "ekle" eylemi (padd) yerinde ve V.preview kullanıyor');
 ok(/\n {2}pdel\(ds\)\{V\.preview\.splice/.test(src), 'yemek önizleme "çıkar" eylemi (pdel) yerinde');
 
+// 7) Kardiyo ayrıntıları: türe göre hız/eğim alanları sorulur, kaydedilir ve listede gösterilir
+ok(/data-i="cdt"/.test(src) && /ATH\.cardioFields\(t\)/.test(src) && /data-cdf=/.test(src), 'kardiyo türüne göre hız/eğim alanları soruluyor');
+ok(!/id="cdh"/.test(src) && !/data-cdf="hr"/.test(src) && !/rawH/.test(src), 'kardiyo formunda nabız alanı yok');
+ok(/ATH\.cardioStat\(x\.t,x\.min,x\.km,x\)/.test(src), 'kardiyo ayrıntıları listede gösteriliyor');
+ok(/e\.speed=r1\(sp\)/.test(src) && /e\.incline=r1\(inc\)/.test(src), 'kardiyo ayrıntıları kayda yazılıyor');
+ok(!/id="cdk"/.test(src) && !/placeholder="km"/.test(src), 'kardiyo formunda km/mesafe girişi yok');
+ok(/ATH\.cardioEstimate\(/.test(src) && /id="cdpv"/.test(src) && /kcal/.test(src), 'mesafe ve kalori hız+süreden otomatik hesaplanıp önizleniyor');
+ok(/cardioEstimate\(\{t,min,speed:rawS!==''\?sp:0,incline:rawI!==''\?inc:0,weight:cardioWeight\(\)\}\)/.test(src), 'kayıt sırasında mesafe ve kalori sunucudan bağımsız hesaplanıyor');
+ok(/e\.kcal=est\.kcal/.test(src) && /cKcal/.test(src), 'kardiyo kalorisi kayda ve haftalık özete ekleniyor');
+ok(!/data-a="cardiocoach"/.test(src) && !/Kardiyoyu yorumla/.test(src), 'kardiyo kartında ayrı yapay zekâ düğmesi yok (yorum Antrenmanımı yorumla ile birlikte)');
+ok(/kardiyo:cardioObj\(\)/.test(src) && /function cardioObj\(\)/.test(src), 'Antrenmanımı yorumla kardiyo verisini de gönderiyor');
+ok(/KARDİYO \(yalnızca kardiyo verisi varsa/.test(src) && /DAHİL DEĞİLDİR/.test(src), 'yorum isteminde kardiyo başlığı ve kalori ayrımı var');
+ok(/const foodErr=e=>/.test(src) && /V\.err=V\.err\|\|foodErr\(e\)/.test(src), 'yiyeceği elle girme ipucu yalnızca yemek akışında (foodErr) ekleniyor');
+ok(!/V\.coach=.*Yiyeceği elle/.test(src) && !/V\.liftCoach=.*Yiyeceği elle/.test(src), 'koç ve antrenman yorumunda yiyecek ipucu yok');
+
 console.log(`\n${pass} geçti, ${fail} başarısız`);
 process.exit(fail ? 1 : 0);

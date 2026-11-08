@@ -8,7 +8,6 @@
   const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
   const num = x => { const n = Number(String(x == null ? '' : x).replace(',', '.')); return isFinite(n) ? n : 0; };
   const r1 = x => Math.round(x * 10) / 10;
-
   /* ---------- sabah kontrolü / hazır oluş ---------- */
   // alan: [ad, soru, yüksek iyi mi, ağırlık]
   const CHK = [
@@ -133,14 +132,82 @@
 
   /* ---------- kardiyo ---------- */
   const CARDIO = ['Koşu', 'Yürüyüş', 'Bisiklet', 'Yüzme', 'Kürek', 'Eliptik', 'HIIT', 'Diğer'];
-  function cardioStat(t, min, km) {
+  // Türe göre sorulacak ayrıntılar: süre ile birlikte hız ve eğim. Nabız istenmez.
+  const CARDIO_DETAIL = {
+    speed: { k: 'speed', label: 'Hız', unit: 'km/sa', ph: 'km/sa' },
+    incline: { k: 'incline', label: 'Eğim', unit: '%', ph: 'eğim %' },
+  };
+  const CARDIO_FIELDS = {
+    'Koşu': ['speed', 'incline'], 'Yürüyüş': ['speed', 'incline'],
+    'Bisiklet': ['speed', 'incline'], 'Yüzme': ['speed', 'incline'], 'Kürek': ['speed', 'incline'],
+    'Eliptik': ['speed', 'incline'], 'HIIT': ['speed', 'incline'], 'Diğer': ['speed', 'incline'],
+  };
+  // Hız boş bırakılırsa türün ortalama hızı kullanılır (mesafe yine otomatik hesaplanır).
+  const CARDIO_DEFAULT_SPEED = { 'Koşu': 8, 'Yürüyüş': 5, 'Bisiklet': 18, 'Eliptik': 6, 'Diğer': 6 };
+  function cardioFields(t) { return (CARDIO_FIELDS[t] || CARDIO_FIELDS['Diğer']).map(k => CARDIO_DETAIL[k]); }
+
+  // Hız (km/sa) × süre (dk) → mesafe (km). Kullanıcı km yazmaz; hız+süreden bulunur.
+  function cardioDistance(x) {
+    x = x || {};
+    const min = num(x.min), sp = num(x.speed) || num(CARDIO_DEFAULT_SPEED[x.t]) || 0;
+    return sp > 0 && min > 0 ? Math.round(sp * min / 60 * 100) / 100 : 0;
+  }
+
+  // Tahmini yakılan kalori (MET / ACSM denklemleri). SADECE kardiyo kartında ve koç yorumunda görünür;
+  // günlük yenen/yakılan (Apple Sağlık) hesabına eklenmez, böylece çift sayım olmaz.
+  function cardioBurn(x) {
+    x = x || {};
+    const t = x.t || 'Diğer', min = num(x.min), kg = num(x.weight) || 75;
+    if (!(min > 0)) return 0;
+    const sp = num(x.speed) || num(CARDIO_DEFAULT_SPEED[t]) || 0;
+    const inc = clamp(num(x.incline), 0, 40);
+    if (t === 'Koşu' || t === 'Yürüyüş') {
+      const mMin = sp * 1000 / 60, grade = inc / 100;
+      const vo2 = t === 'Koşu' ? 3.5 + 0.2 * mMin + 0.9 * mMin * grade : 3.5 + 0.1 * mMin + 1.8 * mMin * grade;
+      return Math.round(vo2 * kg / 1000 * 5 * min);
+    }
+    let met;
+    if (t === 'Bisiklet') met = sp >= 30 ? 14 : sp >= 25 ? 12 : sp >= 22 ? 10 : sp >= 19 ? 8 : sp >= 16 ? 6 : 4;
+    else if (t === 'Eliptik') met = 5 + inc * 0.1 + Math.max(0, sp - 5) * 0.3;
+    else if (t === 'Yüzme') met = 6;
+    else if (t === 'Kürek') met = 7;
+    else if (t === 'HIIT') met = 9;
+    else met = 6;
+    return Math.round(met * 3.5 * kg / 200 * min);
+  }
+
+  function cardioEstimate(x) {
+    x = x || {};
+    const t = x.t || 'Diğer';
+    const speed = num(x.speed) || num(CARDIO_DEFAULT_SPEED[t]) || 0;
+    return { t, speed, km: cardioDistance({ t, min: x.min, speed }), kcal: cardioBurn({ t, min: x.min, speed, incline: x.incline, weight: x.weight }) };
+  }
+
+  // x: {speed, incline, hr, kcal} (isteğe bağlı). Eski çağrılar (üç argüman) aynı metni verir.
+  function cardioStat(t, min, km, x) {
     min = num(min); km = num(km);
+    x = x && typeof x === 'object' ? x : {};
+    const sp = num(x.speed), inc = num(x.incline), hr = num(x.hr), kcal = num(x.kcal);
     if (!(min > 0)) return '';
-    if (!(km > 0)) return `${Math.round(min)} dk`;
-    const dist = `${String(r1(km)).replace('.', ',')} km`;
-    if (t === 'Koşu' || t === 'Yürüyüş') { const p = min / km, m = Math.floor(p), s = Math.round((p - m) * 60); return `${Math.round(min)} dk · ${dist} · ${m}:${String(s === 60 ? 59 : s).padStart(2, '0')} /km`; }
-    if (t === 'Yüzme') { const p = min / (km * 10), m = Math.floor(p), s = Math.round((p - m) * 60); return `${Math.round(min)} dk · ${dist} · ${m}:${String(s === 60 ? 59 : s).padStart(2, '0')} /100 m`; }
-    return `${Math.round(min)} dk · ${dist} · ${String(r1(km / (min / 60))).replace('.', ',')} km/sa`;
+    const parts = [`${Math.round(min)} dk`];
+    let derivedSpeed = false;
+    if (km > 0) {
+      const dist = `${String(r1(km)).replace('.', ',')} km`;
+      parts.push(dist);
+      if (t === 'Koşu' || t === 'Yürüyüş') parts.push(`${pace(min / km)} /km`);
+      else if (t === 'Yüzme') parts.push(`${pace(min / (km * 10))} /100 m`);
+      else { derivedSpeed = true; parts.push(`${String(r1(sp > 0 ? sp : km / (min / 60))).replace('.', ',')} km/sa`); }
+    }
+    if (sp > 0 && !derivedSpeed) parts.push(`${String(r1(sp)).replace('.', ',')} km/sa`);
+    if (inc > 0) parts.push(`eğim %${String(r1(inc)).replace('.', ',')}`);
+    if (hr > 0) parts.push(`nabız ${Math.round(hr)}`);
+    if (kcal > 0) parts.push(`≈ ${Math.round(kcal)} kcal`);
+    return parts.join(' · ');
+  }
+  // dakika/km → m:ss
+  function pace(p) {
+    const m = Math.floor(p), s = Math.round((p - m) * 60);
+    return `${m}:${String(s === 60 ? 59 : s).padStart(2, '0')}`;
   }
 
   /* ---------- kendi dinlenme süren: "75", "75 sn", "1:30", "2 dk", "1,5 dk", "1 dk 30 sn" → saniye (10 sn – 15 dk) ---------- */
@@ -168,5 +235,5 @@
     return [headers, ...rows].map(r => r.map(cell).join(sep)).join('\r\n') + '\r\n';
   }
 
-  return { CHK, readiness, readinessAdvice, deload, weightGoal, calorieAdjust, proteinPlan, cardioStat, CARDIO, toCsv, parseRest, PRO_RANGE };
+  return { CHK, readiness, readinessAdvice, deload, weightGoal, calorieAdjust, proteinPlan, cardioStat, cardioFields, cardioDistance, cardioBurn, cardioEstimate, CARDIO, CARDIO_DETAIL, CARDIO_DEFAULT_SPEED, toCsv, parseRest, PRO_RANGE };
 });

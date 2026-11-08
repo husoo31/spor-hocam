@@ -90,6 +90,28 @@ ok(A.cardioStat('Koşu', 30, 5) === '30 dk · 5 km · 6:00 /km', 'koşu temposu 
 ok(A.cardioStat('Bisiklet', 60, 24) === '60 dk · 24 km · 24 km/sa', 'bisiklet hızı km/sa');
 ok(A.cardioStat('Yüzme', 30, 1.5) === '30 dk · 1,5 km · 2:00 /100 m', 'yüzme 100 m temposu');
 ok(A.cardioStat('Koşu', 20, 0) === '20 dk' && A.cardioStat('Koşu', 0, 5) === '', 'mesafe/süre yoksa yalnızca süre ya da boş');
+ok(A.cardioStat('Koşu', 30, 5, { speed: 9, incline: 6, hr: 150 }) === '30 dk · 5 km · 6:00 /km · 9 km/sa · eğim %6 · nabız 150', 'eğim/hız/nabız ayrıntıları gösteriliyor');
+ok(A.cardioStat('Bisiklet', 60, 24, { speed: 28, hr: 130 }) === '60 dk · 24 km · 28 km/sa · nabız 130', 'girilen hız, mesafeden hesaplananın yerine geçiyor');
+ok(A.cardioStat('Yürüyüş', 40, 0, { incline: 12 }) === '40 dk · eğim %12', 'mesafe olmadan eğim gösterilebiliyor');
+ok(A.cardioFields('Yürüyüş').map(f => f.k).join(',') === 'speed,incline', 'yürüyüşte hız ve eğim sorulur');
+ok(A.cardioFields('Bisiklet').map(f => f.k).join(',') === 'speed,incline' && A.cardioFields('Yüzme').map(f => f.k).join(',') === 'speed,incline', 'tüm kardiyo türlerinde hız ve eğim sorulur');
+ok(A.cardioFields('Koşu').every(f => f.k !== 'hr') && A.CARDIO_DETAIL.hr === undefined, 'nabız alanı istenmiyor');
+ok(A.cardioFields('Yüzme')[0].label === 'Hız' && A.cardioFields('Yüzme')[0].unit === 'km/sa', 'alan etiketi ve birimi tanımlı');
+
+// mesafe ve kalori otomatik hesap (kullanıcı km yazmaz)
+ok(A.cardioDistance({ t: 'Koşu', min: 30, speed: 10 }) === 5, 'hız × süre → mesafe: 10 km/sa 30 dk = 5 km');
+ok(A.cardioDistance({ t: 'Yürüyüş', min: 30 }) === 2.5, 'hız boşsa türün varsayılan hızı kullanılıyor: yürüyüş 5 km/sa 30 dk = 2,5 km');
+ok(A.cardioDistance({ t: 'Bisiklet', min: 0, speed: 20 }) === 0 && A.cardioDistance({}) === 0, 'süre ya da hız yoksa mesafe 0');
+ok(A.cardioBurn({ t: 'Koşu', min: 30, speed: 10, weight: 75 }) === 414, 'koşu MET/ACSM kalorisi: 10 km/sa 30 dk 75 kg ≈ 414 kcal');
+ok(A.cardioBurn({ t: 'Yürüyüş', min: 30, speed: 5, weight: 75 }) === 133, 'yürüyüş MET/ACSM kalorisi: 5 km/sa 30 dk 75 kg ≈ 133 kcal');
+ok(A.cardioBurn({ t: 'Bisiklet', min: 60, speed: 20, weight: 75 }) === 630, 'bisiklet MET kalorisi: 20 km/sa 60 dk 75 kg ≈ 630 kcal');
+ok(A.cardioBurn({ t: 'Koşu', min: 0, speed: 10 }) === 0 && A.cardioBurn({}) === 0, 'süre yoksa kalori 0');
+ok(A.cardioBurn({ t: 'Koşu', min: 30, speed: 10, incline: 10, weight: 75 }) > A.cardioBurn({ t: 'Koşu', min: 30, speed: 10, weight: 75 }), 'eğim arttıkça yakılan kalori artıyor');
+const est = A.cardioEstimate({ t: 'Koşu', min: 30, speed: 10, weight: 75 });
+ok(est.km === 5 && est.kcal === 414 && est.speed === 10 && est.t === 'Koşu', 'cardioEstimate mesafe, kalori ve hızı birlikte döndürüyor');
+ok(A.cardioEstimate({ t: 'Yürüyüş', min: 30 }).speed === 5, 'cardioEstimate boş hızda varsayılan hızı döndürüyor');
+ok(A.cardioStat('Koşu', 30, 5, { speed: 10, hr: 150, kcal: 414 }) === '30 dk · 5 km · 6:00 /km · 10 km/sa · nabız 150 · ≈ 414 kcal', 'kardiyo kalorisi yalnızca kardiyo özetinde gösteriliyor');
+ok(!A.cardioStat('Koşu', 30, 5).includes('kcal'), 'kcal yoksa özette kalori yazılmıyor');
 
 // CSV
 const csv = A.toCsv(['Tarih', 'Not', 'Kilo'], [['2026-10-13', 'a;b "c"', 80.5], ['2026-10-14', '=1+1', null]]);
