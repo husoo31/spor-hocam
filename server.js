@@ -52,6 +52,8 @@ const SETTING_DEFAULTS = () => ({
   ai_user_limit: String(Number(env.AI_DAILY_LIMIT_PER_USER) || 80),
   ai_global_limit: String(Number(env.AI_DAILY_LIMIT_GLOBAL) || 300),
   max_users: String(Number(env.MAX_USERS) || 10),
+  // Sohbet sekmesi (yapay zekâ asistanı) açık mı? Yönetim panelinden kapatılır.
+  chat_enabled: env.CHAT_ENABLED === 'false' ? 'false' : 'true',
   // Kullanıcılar, yöneticinin verilerine baktığını (view_data) kendi ekranlarında görsün mü? Varsayılan: hayır.
   show_access_log: 'false',
 });
@@ -730,6 +732,9 @@ async function handleAi(req, res, user) {
    Sohbetler kullanıcıya ait oturumlar olarak SQLite'ta saklanır; güncellemelerde silinmez. */
 const CHAT_ID_RE = /^cs[0-9a-f]{16}$/;
 const CHAT_MAX_SESSIONS = 200, CHAT_MAX_MESSAGES = 600, CHAT_CONTEXT_MAX = 4000;
+// Sohbet yönetim panelinden kapatılınca hiçbir hesap (yönetici dahil) kullanamaz; sekme de görünmez.
+const chatEnabled = () => getSetting('chat_enabled') === 'true';
+const requireChat = () => { if (!chatEnabled()) throw new HttpError(503, 'chat_disabled', 'Sohbet şu anda yönetici tarafından kapatılmış.'); };
 const genChatId = () => 'cs' + rnd(8).toString('hex');
 function chatTitle(text) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
@@ -818,6 +823,7 @@ function chatPrompt(messages, context, hasImages) {
   return `${rules.join(' ')}\nBugün: ${today()}${ctx}\n\nSohbet geçmişi:\n${transcript}\nAsistan:`;
 }
 async function handleChat(req, res, user) {
+  requireChat();
   const body = await readBody(req, 12 * 1024 * 1024);
   const content = typeof body.content === 'string' ? body.content.trim() : '';
   const { images, thumbs } = chatImages(body);
@@ -1027,7 +1033,7 @@ async function handleAdmin(req, res, p, m, cu, ip) {
       invites: q.invList.all().map(r => ({ id: r.id, code: r.code, label: r.label, maxUses: r.max_uses, uses: r.uses, expires: r.expires, created: r.created,
         status: !r.active ? 'iptal' : r.expires && r.expires < now ? 'süresi doldu' : r.max_uses && r.uses >= r.max_uses ? 'doldu' : 'geçerli' })),
       masterInvite: !!env.INVITE_CODE,
-      settings: { registration: getSetting('registration'), aiUserLimit: Number(getSetting('ai_user_limit')), aiGlobalLimit: Number(getSetting('ai_global_limit')), maxUsers: Number(getSetting('max_users')), showAccessLog: getSetting('show_access_log') === 'true' },
+      settings: { registration: getSetting('registration'), aiUserLimit: Number(getSetting('ai_user_limit')), aiGlobalLimit: Number(getSetting('ai_global_limit')), maxUsers: Number(getSetting('max_users')), showAccessLog: getSetting('show_access_log') === 'true', chatEnabled: chatEnabled() },
       backup: backupInfo(),
       stats: { users: users.length, aiToday: q.usageSum.get(day).n, aiCache: q.cacheCount.get().n, foodCache: q.foodCacheCount.get().n, dbBytes: dbBytes() },
       system: {
@@ -1080,6 +1086,7 @@ async function handleAdmin(req, res, p, m, cu, ip) {
     if (b.aiGlobalLimit !== undefined) out.ai_global_limit = String(intIn(b.aiGlobalLimit, 0, 1000000, 'Toplam günlük limit'));
     if (b.maxUsers !== undefined) out.max_users = String(intIn(b.maxUsers, 1, 1000, 'En fazla kullanıcı'));
     if (b.showAccessLog !== undefined) out.show_access_log = b.showAccessLog ? 'true' : 'false';
+    if (b.chatEnabled !== undefined) out.chat_enabled = b.chatEnabled ? 'true' : 'false'; // kapatınca sohbet herkese kapanır
     if (b.registration === 'open') await adminPw(admin, b.adminPassword, ip);   // herkese açmak riskli: şifre iste
     tx(() => { for (const [k, v] of Object.entries(out)) q.setPut.run(k, v); });
     logAdmin(admin.id, null, 'update_settings', out);
@@ -1425,7 +1432,7 @@ async function handleApi(req, res, url) {
     if (c && c.user.disabled) c = null;
     return send(res, 200, {
       user: c ? publicUser(c.user) : null,
-      config: { registration: regMode(), hasUsers: q.userCount.get().n > 0, ai: aiEnabled(), images: { maxCount: 4, mediaTypes: IMG_TYPES }, ref: { usda: ref.usdaEnabled(), off: true } },
+      config: { registration: regMode(), hasUsers: q.userCount.get().n > 0, ai: aiEnabled(), chat: chatEnabled(), images: { maxCount: 4, mediaTypes: IMG_TYPES }, ref: { usda: ref.usdaEnabled(), off: true } },
     });
   }
 
@@ -1498,10 +1505,12 @@ async function handleApi(req, res, url) {
   }
   if (p === '/api/chat/sessions' && m === 'GET') {
     const { user } = requireUser(req);
+    requireChat();
     return send(res, 200, { sessions: q.chatList.all(user.id).map(chatSessionOut), models: chatCatalog() });
   }
   if (p === '/api/chat/import' && m === 'POST') { // eski cihazdaki geçmişi bir kez sunucuya taşır
     const { user } = requireUser(req);
+    requireChat();
     const b = await readBody(req, 1024 * 1024);
     if (q.chatCount.get(user.id).n) throw new HttpError(409, 'exists', 'Sohbet geçmişi zaten sunucuda.');
     const msgs = chatCleanMessages(b.messages);
@@ -1517,6 +1526,7 @@ async function handleApi(req, res, url) {
   const chatSm = p.match(/^\/api\/chat\/sessions\/([^/]+)$/);
   if (chatSm) {
     const { user } = requireUser(req);
+    requireChat();
     const id = decodeURIComponent(chatSm[1]);
     if (!CHAT_ID_RE.test(id)) throw new HttpError(400, 'bad_request', 'Geçersiz sohbet.');
     const sess = q.chatGet.get(id, user.id);

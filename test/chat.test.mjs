@@ -184,6 +184,36 @@ try {
   ok(r.s === 200 && !r.j.userMessage.images, 'geçersiz önizlemeler sessizce atıldı');
   ok(!sentImgs[sentImgs.length - 1].length, 'önizleme görseli modele gönderilmedi');
 
+  /* ---- sohbeti yönetim panelinden kapatma ---- */
+  const sid0 = sid;
+  r = await call('POST', '/api/admin/settings', { chatEnabled: false });
+  ok(r.s === 200, 'sohbet yönetimden kapatıldı');
+  r = await call('GET', '/api/me');
+  ok(r.s === 200 && r.j.config.chat === false, 'kapatınca yapılandırmada sohbet kapalı görünüyor');
+  r = await call('GET', '/api/me', undefined, 2);
+  ok(r.s === 200 && r.j.config.chat === false, 'kapalı durum diğer kullanıcıya da yansıyor');
+  r = await chat({ content: 'merhaba' });
+  ok(r.s === 503 && r.j.code === 'chat_disabled', 'kapalıyken yönetici mesaj gönderemiyor');
+  r = await chat({ content: 'merhaba' }, 2);
+  ok(r.s === 503 && r.j.code === 'chat_disabled', 'kapalıyken diğer kullanıcı mesaj gönderemiyor');
+  r = await sessions();
+  ok(r.s === 503 && r.j.code === 'chat_disabled', 'kapalıyken oturum listesi kapalı');
+  r = await call('GET', '/api/chat/sessions/' + sid0);
+  ok(r.s === 503 && r.j.code === 'chat_disabled', 'kapalıyken oturum geçmişi okunamıyor');
+  r = await call('DELETE', '/api/chat/sessions/' + sid0);
+  ok(r.s === 503 && r.j.code === 'chat_disabled', 'kapalıyken oturum silinemiyor');
+  r = await call('POST', '/api/chat/import', { messages: [{ role: 'user', content: 'eski' }] }, 2);
+  ok(r.s === 503 && r.j.code === 'chat_disabled', 'kapalıyken içe aktarma kapalı');
+  r = await call('GET', '/api/admin/overview');
+  ok(r.s === 200 && r.j.settings.chatEnabled === false, 'yönetim paneli kapalı durumu gösteriyor');
+
+  r = await call('POST', '/api/admin/settings', { chatEnabled: true });
+  ok(r.s === 200, 'sohbet yeniden açıldı');
+  r = await call('GET', '/api/me');
+  ok(r.s === 200 && r.j.config.chat === true, 'açınca yapılandırmada sohbet açık görünüyor');
+  r = await sessions();
+  ok(r.s === 200 && r.j.sessions.length === 1 && r.j.sessions[0].id === sid0, 'sohbetler kapalıyken silinmedi, açınca geri geldi');
+
   /* ---- yeniden başlatma sonrası kalıcılık ---- */
   await new Promise(res => { srv.once('exit', res); srv.kill(); });
   srv = start();

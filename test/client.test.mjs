@@ -72,5 +72,11 @@ ok(/KARDİYO \(yalnızca kardiyo verisi varsa/.test(src) && /DAHİL DEĞİLDİR/
 ok(/const foodErr=e=>/.test(src) && /V\.err=V\.err\|\|foodErr\(e\)/.test(src), 'yiyeceği elle girme ipucu yalnızca yemek akışında (foodErr) ekleniyor');
 ok(!/V\.coach=.*Yiyeceği elle/.test(src) && !/V\.liftCoach=.*Yiyeceği elle/.test(src), 'koç ve antrenman yorumunda yiyecek ipucu yok');
 
+// 8) Sohbet sekmesi yönetici kapattığında arayüzden tamamen kalkmalı
+ok(/const chatOn=!\(AUTH\.config&&AUTH\.config\.chat===false\)/.test(src) && /chatOn\?\[\['chat'/.test(src), 'sohbet sekmesi yönetici kapattığında arayüzden kalkıyor');
+ok(/AUTH\.config&&AUTH\.config\.chat===false\)return/.test(src), 'sohbet kapalıyken sunucudan sohbet verisi istenmiyor');
+ok(/name="chatEnabled"/.test(src) && /chatEnabled:fd\.get\('chatEnabled'\)==='on'/.test(src), 'yönetim panelinde sohbet aç/kapa düğmesi var ve kaydediliyor');
+ok(/if\(me&&me\.config\)AUTH\.config=me\.config/.test(src), 'ayar kaydedilince sohbet durumu hemen yenileniyor');
+
 console.log(`\n${pass} geçti, ${fail} başarısız`);
 process.exit(fail ? 1 : 0);

@@ -409,10 +409,12 @@ const FORMS={
     V.adm.newInvite=r.code;V.adm.data=await api('/admin/overview');
   },
   async adm_settings(fd){
-    const body={registration:String(fd.get('registration')),aiUserLimit:String(fd.get('aiUserLimit')),aiGlobalLimit:String(fd.get('aiGlobalLimit')),maxUsers:String(fd.get('maxUsers')),showAccessLog:fd.get('showAccessLog')==='on'};
+    const body={registration:String(fd.get('registration')),aiUserLimit:String(fd.get('aiUserLimit')),aiGlobalLimit:String(fd.get('aiGlobalLimit')),maxUsers:String(fd.get('maxUsers')),showAccessLog:fd.get('showAccessLog')==='on',chatEnabled:fd.get('chatEnabled')==='on'};
     const pw=String(fd.get('adminPassword')||'');if(pw)body.adminPassword=pw;
     await api('/admin/settings',{method:'POST',body});
     V.adm.data=await api('/admin/overview');V.smsg={ok:true,t:'Ayarlar kaydedildi.'};
+    // sohbet açılıp kapandıysa kendi ekranında da hemen görünsün
+    try{const me=await api('/me');if(me&&me.config)AUTH.config=me.config}catch(e){}
   },
   async register(fd){
     const u=String(fd.get('u')||'').trim(),pw=String(fd.get('pw')||''),pw2=String(fd.get('pw2')||'');
@@ -599,6 +601,7 @@ async function chatImportLocal(){ // eski sürümde cihazda tutulan geçmişi bi
 async function chatBoot(){
   const c=V.chat;
   if(c.booted||c.loading)return;
+  if(AUTH.config&&AUTH.config.chat===false)return; // sohbet kapalı: sunucuya hiç sorulmaz
   c.loading=true;
   try{
     await chatImportLocal();
@@ -2591,6 +2594,7 @@ function admSystem(){
     <div style="margin-top:10px"><label for="sr">Kayıt modu</label><select id="sr" name="registration">${[['invite','Davet kodu ile'],['closed','Kapalı (kimse kayıt olamaz)'],['open','Herkese açık (önerilmez)']].map(([v,l])=>`<option value="${v}" ${S_.registration===v?'selected':''}>${l}</option>`).join('')}</select></div>
     <div class="grid2" style="margin-top:10px"><div><label for="su">Kişi başı günlük YZ limiti</label><input id="su" name="aiUserLimit" inputmode="numeric" value="${S_.aiUserLimit}"></div><div><label for="sg">Toplam günlük YZ limiti</label><input id="sg" name="aiGlobalLimit" inputmode="numeric" value="${S_.aiGlobalLimit}"></div>
     <div><label for="sm2">En fazla kullanıcı</label><input id="sm2" name="maxUsers" inputmode="numeric" value="${S_.maxUsers}"></div></div>
+    <label class="chk" style="margin-top:14px;align-items:flex-start"><input type="checkbox" name="chatEnabled" ${S_.chatEnabled?'checked':''} style="margin-top:2px"><span>💬 Sohbet sekmesi açık <span class="mut small">(kapatınca sohbet sekmesi yönetici dahil herkese kaybolur ve asistana mesaj gönderilemez. Sohbetler silinmez; yeniden açınca aynı yerlerinde geri gelir. Diğer yapay zekâ özellikleri —koç yorumu, takviye ve etiket okuma— bundan etkilenmez.)</span></span></label>
     <label class="chk" style="margin-top:14px;align-items:flex-start"><input type="checkbox" name="showAccessLog" ${S_.showAccessLog?'checked':''} style="margin-top:2px"><span>Kullanıcılar, verilerine baktığımı kendi ekranlarında görsün <span class="mut small">(kapalıyken yalnızca şifre sıfırlama, veri silme gibi hesabı etkileyen işlemler görünür)</span></span></label>
     <p class="small mut" style="margin:10px 0 0">Kaydı herkese açmak için şifreni gir (diğer değişikliklerde boş bırakabilirsin).</p>${admPwField('apw5').replace(' required','')}
     <button class="btn full" style="margin-top:12px">Kaydet</button></form></div>
@@ -2650,7 +2654,10 @@ function render(){
   const app=document.getElementById('app');
   if(!AUTH.cur||AUTH.cur.mustChange){document.body.classList.remove('chatmode');app.innerHTML=viewAuth();return}
   const views={today:viewToday,supp:viewSupp,chat:viewChat,hist:viewHistory,stats:viewStats,settings:viewSettings};
-  const tabs=[['today','🍽','Bugün'],['supp','💊','Takviye'],['chat','💬','Sohbet'],['hist','🗓','Geçmiş'],['stats','📈','Analiz'],['settings','⚙️','Ayarlar']];
+  // sohbet yöneticiden kapatıldıysa sekme hiç görünmez (yönetici dahil), açıkken o anda sohbet açıksa Bugün'e dön
+  const chatOn=!(AUTH.config&&AUTH.config.chat===false);
+  if(!chatOn&&V.tab==='chat'){V.tab='today';V.chat.open=false}
+  const tabs=[['today','🍽','Bugün'],['supp','💊','Takviye'],...(chatOn?[['chat','💬','Sohbet']]:[]),['hist','🗓','Geçmiş'],['stats','📈','Analiz'],['settings','⚙️','Ayarlar']];
   app.innerHTML=`<div class="svw"><span class="small mut">👤 ${esc(S.profile.name||AUTH.cur.username)}</span><div class="row" style="gap:8px;margin:0"><div class="sv" id="sv">${statusHtml()}</div>${sysDot()}</div></div>`+(V.sys.open?sysPanel():'')+(views[V.tab]||viewToday)()+`<nav class="tabs" aria-label="Sekmeler"><div>${tabs.map(([k,i,t])=>`<button data-a="tab" data-t="${k}" class="${V.tab===k?'on':''}" ${V.tab===k?'aria-current="page"':''}><span>${i}</span>${t}</button>`).join('')}</div></nav>`;
   document.body.classList.toggle('chatmode',V.tab==='chat');
   if(V.tab==='chat'&&V.chat.msgs.length&&!V.chat.loadingMsgs)chatScroll();
