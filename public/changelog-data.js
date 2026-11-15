@@ -153,4 +153,9 @@ window.CHANGELOG = [
       ['iyi', 'Fotoğraflar sohbet balonunda küçük önizlemelerle görünür ve sohbet geçmişinde kalır. Veritabanına tam boy fotoğraf değil, yalnızca küçük önizleme yazılır; disk şişmez.'],
       ['iyi', 'Mesaj metni yazmadan yalnızca fotoğrafla da soru gönderilebilir. Gönderim başarısız olursa yazı ve fotoğraflar giriş alanına geri yüklenir; model yanıtın altında adı ve süresiyle görünür.']],
     commits: [['e233ab8', '2026-11-15 15:44', 'Sohbet: fotografli mesaj gonderme (v0.26)']] },
+  { v: 'v0.27', d: '2026-11-15 17:32', title: 'Tam ekran sohbet, koyu tema kontrastı ve token bütçesi', items: [
+      ['iyi', 'Sohbet sekmesi tam ekrana alındı: içerik artık "sitenin içinde site" gibi kartın içinde durmuyor, üst başlık ile alt sekmeler arasındaki tüm alanı dolduruyor. Kenar boşlukları, kart çerçevesi ve gölge kaldırıldı; masaüstünde sohbet geçmişi kalıcı bir yan sütun olarak duruyor.'],
+      ['iyi', 'Koyu temada model seçici listesindeki "beyaz üstüne gri" okunmuyor sorun düzeltildi: seçenekler artık uygulamanın kendi renkleriyle çiziliyor. Sistem açılır listeleri ve tarih kontrolleri de temaya uyuyor.'],
+      ['iyi', 'Sohbette modele gönderilen geçmiş ~28.000 karakterden 14.000 karaktere indirildi; uzun sohbetlerde her mesajda yeniden giden token miktarı belirgin biçimde azalıyor. Ücretsiz kotalar için .env içindeki AI_CHAT_CONTEXT_CHARS (4.000-40.000) ile ayarlanabilir; eski mesajlar veritabanında kalmaya devam eder.']],
+    commits: [['30e4426', '2026-11-15 16:41', 'Koyu temada acilir liste kontrasti ve sohbet gecmisi token butcesi (v0.27)'], ['170d3d7', '2026-11-15 17:30', 'Sohbet sekmesi tam ekran ve duyarli duzen (v0.27)']] },
 ];
