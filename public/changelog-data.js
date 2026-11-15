@@ -137,5 +137,5 @@ window.CHANGELOG = [
       ['yeni', 'Kullanıcı yapay zekâ modelini seçmez. Sunucu her mesajda ölçülen yanıt süresi en kısa olan sağlıklı modeli otomatik seçer; model hata verirse sıradaki en hızlı model devralır.'],
       ['iyi', 'Yanıtın altında hangi sağlayıcının kaç milisaniyede cevap verdiği görünür. Profil, günlük hedefler ve o günün kalori/protein özeti sohbete bağlam olarak eklenir.'],
       ['iyi', 'Sohbet de günlük yapay zekâ hakkından bir çağrı sayılır; "Temizle" düğmesi yalnızca bu cihazdaki sohbet geçmişini siler.']],
-    commits: [] },
+    commits: [['d4cafbe', '2026-11-15 14:10', 'Sohbet: otomatik en hizli yapay zeka secimi (v0.24)']] },
 ];
