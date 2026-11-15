@@ -73,7 +73,7 @@ const scaleN=(n,k)=>{const o={};Object.keys(n).forEach(key=>{const v=n[key]*k;if
 /* ---------- durum ---------- */
 const defaultS=()=>({profile:{sex:'m',age:'',height:'',weight:'',act:'1.55',goal:'cut'},goals:{kcal:0,protein:0,carbs:0,fat:0,tdee:0,bmr:0,water:0},supps:[],lib:[],prefs:{precise:true},programs:[],active:null,plan:{days:{}},months:{}});
 let S=defaultS();
-const chatDefault=()=>({sessions:[],sid:null,title:'',msgs:[],models:[],model:'auto',busy:false,err:'',draft:'',open:false,loading:false,loadingMsgs:false,booted:false});
+const chatDefault=()=>({sessions:[],sid:null,title:'',msgs:[],models:[],model:'auto',imgs:[],busy:false,err:'',draft:'',open:false,loading:false,loadingMsgs:false,booted:false});
 const hr=new Date().getHours();
 let V={sys:{open:false,busy:false,data:null,err:''},tab:'today',date:TODAY,food:'',mealType:hr<11?'Kahvaltı':hr<16?'Öğle':hr<21?'Akşam':'Atıştırmalık',preview:null,pnotes:[],busy:false,busyMsg:'',err:'',edit:null,undo:null,
   fimgs:[],simgs:[],cap:null,og:{0:true},
@@ -617,6 +617,7 @@ async function chatBoot(){
 function chatNew(){
   const c=V.chat;
   if(c.busy)return;
+  chatImgsClear();
   c.sid=null;c.title='';c.msgs=[];c.err='';c.draft='';c.open=false;
   render();
   chatFocus();
@@ -624,6 +625,7 @@ function chatNew(){
 async function chatOpen(id){
   const c=V.chat;
   if(c.busy)return;
+  chatImgsClear();
   c.open=false;c.err='';
   if(!id){c.sid=null;c.title='';c.msgs=[];render();return}
   if(c.sid===id&&c.msgs.length){render();return}
@@ -650,25 +652,33 @@ async function chatDel(id){
 }
 async function sendChat(text){
   text=String(text||'').trim();
-  const c=V.chat;
-  if(!text||c.busy||c.loadingMsgs)return;
+  const c=V.chat,imgs=(c.imgs||[]).slice();
+  if((!text&&!imgs.length)||c.busy||c.loadingMsgs)return;
   if(AUTH.config&&AUTH.config.ai===false){c.err='Yapay zekâ bu sunucuda kapalı.';render();return}
   if(!c.sid&&c.sessions.length>=200){c.err='Sohbet sayısı sınırına ulaşıldı; eski sohbetlerden birini sil.';render();return}
   const tmp={id:'tmp-'+Date.now(),role:'user',content:text,created:Date.now()};
-  c.msgs.push(tmp);c.draft='';c.err='';c.busy=true;render();chatScroll(true);
+  if(imgs.length)tmp.images=imgs.map(x=>x.thumb);
+  c.msgs.push(tmp);c.draft='';c.imgs=[];c.err='';c.busy=true;render();chatScroll(true);
   try{
-    const r=await api('/chat',{method:'POST',body:{sessionId:c.sid||undefined,content:text,context:chatContext(),model:c.model}});
+    const body={sessionId:c.sid||undefined,content:text,context:chatContext(),model:c.model};
+    if(imgs.length){
+      body.images=await Promise.all(imgs.map(x=>blobToB64(x.blob)));
+      body.thumbs=imgs.map(x=>x.thumb);
+    }
+    const r=await api('/chat',{method:'POST',body});
+    imgs.forEach(x=>{try{URL.revokeObjectURL(x.url)}catch(e){}});
     c.sid=r.sessionId||c.sid;
     c.title=(r.session&&r.session.title)||c.title;
     const ix=c.msgs.findIndex(m=>m.id===tmp.id);
     if(ix>=0)c.msgs[ix]=r.userMessage||{...tmp,id:tmp.id};
     if(r.message)c.msgs.push(r.message);
-    if(r.session)chatUpsert({...r.session,count:c.msgs.length,preview:text.slice(0,90)});
+    if(r.session)chatUpsert({...r.session,count:c.msgs.length,preview:text.slice(0,90)||'📷 Fotoğraf'});
   }catch(e){
     c.err=errMsg(e);
     const ix=c.msgs.findIndex(m=>m.id===tmp.id);
-    if(ix>=0)c.msgs.splice(ix,1); // sunucuya yazılmadı; yazıyı giriş alanına geri koy
+    if(ix>=0)c.msgs.splice(ix,1); // sunucuya yazılmadı; yazıyı ve fotoğrafları giriş alanına geri koy
     if(!c.draft)c.draft=text;
+    if(imgs.length&&!c.imgs.length)c.imgs=imgs;
   }
   c.busy=false;render();
   if(V.tab==='chat'){chatScroll(true);chatFocus()}
@@ -697,6 +707,34 @@ async function shrink(file){
   c.width=Math.max(1,Math.round(bmp.width*sc));c.height=Math.max(1,Math.round(bmp.height*sc));
   c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
   return new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej({message:'Fotoğraf işlenemedi.'}),'image/jpeg',.88));
+}
+/* Sohbet fotoğrafı: modele 1280 px JPEG gider, ekranda ve veritabanında küçük önizleme kalır. */
+function chatImgBlob(bmp,max,q){
+  const sc=Math.min(1,max/Math.max(bmp.width,bmp.height)),c=document.createElement('canvas');
+  c.width=Math.max(1,Math.round(bmp.width*sc));c.height=Math.max(1,Math.round(bmp.height*sc));
+  c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
+  return new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej({message:'Fotoğraf işlenemedi.'}),'image/jpeg',q));
+}
+async function chatImgMake(file){
+  const bmp=await createImageBitmap(file);
+  const full=await chatImgBlob(bmp,1280,.85),th=await chatImgBlob(bmp,360,.6),td=await blobToB64(th);
+  return {blob:full,url:URL.createObjectURL(full),thumb:'data:'+td.mime+';base64,'+td.data};
+}
+async function chatAddImgs(files){
+  const c=V.chat,room=Math.max(0,Math.min(4,imgMax()||4)-c.imgs.length);
+  const picked=Array.from(files||[]).slice(0,room);
+  if(!picked.length){if(room===0)toast('En fazla 4 fotoğraf ekleyebilirsin.');return}
+  c.err='';
+  for(const f of picked){
+    if(!/^image\//.test(f.type)){toast('Yalnızca fotoğraf ekleyebilirsin.');continue}
+    try{c.imgs.push(await chatImgMake(f))}catch(e){toast(errMsg(e))}
+  }
+  if(V.tab==='chat'){render();chatScroll(true);chatFocus()}
+}
+function chatImgsClear(){
+  const c=V.chat;
+  (c.imgs||[]).forEach(x=>{try{URL.revokeObjectURL(x.url)}catch(e){}});
+  c.imgs=[];
 }
 const imgMax=()=>(V.cap&&V.cap.images&&V.cap.images.maxCount)||0;
 const imgAccept=()=>(V.cap&&V.cap.images&&V.cap.images.mediaTypes&&V.cap.images.mediaTypes.join(','))||'image/*';
@@ -1732,9 +1770,11 @@ function viewChat(){
   const auto=c.models[0]||null;
   const modelOpts=[`<option value="auto" ${c.model==='auto'?'selected':''}>Auto · en hızlı</option>`]
     .concat(c.models.map(m=>`<option value="${esc(m.key)}" ${c.model===m.key?'selected':''}>${esc(m.label)}${m.ms?' · '+esc(chatDur(m.ms)):''}${m.slow?' (yavaş)':''}</option>`)).join('');
-  const hint=c.model==='auto'
+  const selModel=c.models.find(m=>m.key===c.model);
+  const hint=(c.model==='auto'
     ?(auto?`Auto · şu an en hızlı: <b>${esc(auto.label)}</b>`:'Auto · o an en hızlı yanıt veren model')
-    :`${esc(chatModelName(c.model))} · hata verirse en hızlı yedek devreye girer`;
+    :`${esc(chatModelName(c.model))} · hata verirse en hızlı yedek devreye girer`)
+    +(c.imgs.length&&selModel&&selModel.image===false?' · bu model fotoğraf okuyamaz, fotoğraflı mesajda uygun model seçilir':'');
   const list=groups.length?groups.map(g=>`<div class="cgroup"><div class="cgroup-t">${esc(g.label)}</div>${g.items.map(s=>`<div class="csess ${s.id===c.sid?'on':''}" data-a="chatopen" data-id="${esc(s.id)}" role="button" tabindex="0">
       <span class="csess-ico" aria-hidden="true">💬</span>
       <span class="csess-main"><span class="csess-t">${esc(s.title||'Sohbet')}</span>${s.preview?`<span class="csess-p">${esc(s.preview)}</span>`:''}</span>
@@ -1775,15 +1815,22 @@ function viewChat(){
 
   h+=c.msgs.map(m=>{
     const user=m.role==='user';
-    return `<div class="msg ${user?'user':'ai'}"><div class="bubble">${esc(m.content)}</div>${user?'':`<div class="msgmeta"><span class="mdot" aria-hidden="true"></span>${esc(chatModelName(m.model))}${m.ms?` · ${esc(chatDur(m.ms))}`:''}</div>`}</div>`;
+    const pics=(Array.isArray(m.images)&&m.images.length)?`<div class="msgimgs">${m.images.slice(0,4).map((src,i)=>`<img src="${esc(src)}" alt="Fotoğraf ${i+1}" loading="lazy">`).join('')}</div>`:'';
+    const meta=user?'':`<div class="msgmeta"><span class="mdot" aria-hidden="true"></span>${esc(chatModelName(m.model))}${m.ms?` · ${esc(chatDur(m.ms))}`:''}</div>`;
+    return `<div class="msg ${user?'user':'ai'}">${pics}${m.content?`<div class="bubble">${esc(m.content)}</div>`:''}${meta}</div>`;
   }).join('');
   if(c.busy)h+=`<div class="msg ai typingrow"><div class="bubble typing" role="status" aria-label="Yapay zekâ yazıyor"><span></span><span></span><span></span></div><div class="msgmeta">${c.model==='auto'?'En hızlı model seçiliyor…':esc(chatModelName(c.model))+' yanıtlıyor…'}</div></div>`;
   if(c.err)h+=`<div class="msg ai"><div class="bubble err">${esc(c.err)}</div></div>`;
   h+=`</div>`;
 
-  if(!off)h+=`<form data-f="chat" class="cform" autocomplete="off">
+  if(!off){
+    const canImgs=imgMax()>0,fullImgs=c.imgs.length>=Math.min(4,imgMax()||4);
+    const strip=c.imgs.length?`<div class="cattach-strip">${c.imgs.map((x,i)=>`<div class="cattach"><img src="${x.thumb}" alt="Fotoğraf ${i+1}"><button type="button" class="cattach-x" data-a="chatimgdel" data-ix="${i}" aria-label="Fotoğrafı kaldır">✕</button></div>`).join('')}</div>`:'';
+    h+=`<form data-f="chat" class="cform" autocomplete="off">
+    ${strip}
     <div class="cform-box">
-      <textarea data-i="chat" name="text" rows="1" maxlength="4000" placeholder="Bir şey sor…" aria-label="Mesaj">${esc(c.draft)}</textarea>
+      ${canImgs?`<label class="cattach-btn${c.busy||fullImgs?' off':''}" title="Fotoğraf ekle" aria-label="Fotoğraf ekle">📷<input type="file" accept="${esc(imgAccept())}" multiple data-i="chatimg" ${c.busy||fullImgs?'disabled':''} style="display:none"></label>`:''}
+      <textarea data-i="chat" name="text" rows="1" maxlength="4000" placeholder="Bir şey sor ya da fotoğraf ekle…" aria-label="Mesaj">${esc(c.draft)}</textarea>
       <button class="csend" type="submit" ${c.busy?'disabled':''} aria-label="Gönder">${c.busy?'<span class="csend-busy"></span>':'↑'}</button>
     </div>
     <div class="cform-foot">
@@ -1792,9 +1839,10 @@ function viewChat(){
         <select data-i="chatmodel" aria-label="Model seç">${modelOpts}</select>
         <span class="cmodel-caret" aria-hidden="true">⌄</span>
       </label>
-      <span class="cform-hint mut small">${hint}</span>
+      <span class="cform-hint mut small">${c.imgs.length?`<b>${c.imgs.length} fotoğraf</b> eklendi · `:''}${hint}</span>
     </div>
   </form>`;
+  }
 
   h+=`</div></div>`;
   return h;
@@ -2678,6 +2726,7 @@ const A={
   chatside(){V.chat.open=!V.chat.open;render()},
   chatopen(ds){return chatOpen(ds.id)},
   chatdel(ds){return chatDel(ds.id)},
+  chatimgdel(ds){const c=V.chat,x=c.imgs[+ds.ix];if(x){try{URL.revokeObjectURL(x.url)}catch(e){}c.imgs.splice(+ds.ix,1)}render()},
   range(ds){V.range=+ds.n;render()},
   gtog(ds){V.og[ds.g]=!V.og[ds.g];render()},
   prec(){S.prefs.precise=!S.prefs.precise;persist('core');render()},
@@ -3201,13 +3250,19 @@ document.addEventListener('click',e=>{
   }
 });
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'&&V.chat&&V.chat.open){V.chat.open=false;render();return}
-  if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='exnew'){e.preventDefault();A.exadd();return}
+  if(e.key==='Escape'&&V.chat&&V.chat.open){V.chat.open=false;render();return}  if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='exnew'){e.preventDefault();A.exadd();return}
   if(e.key==='Enter'&&!e.shiftKey&&e.target&&e.target.dataset&&e.target.dataset.i==='chat'){e.preventDefault();A.chatsend();return}
   if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='restc'){e.preventDefault();A.restgo();return}
   if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='pnew'){e.preventDefault();A.planadd(e.target.dataset);return}
   if(e.key==='Enter'&&e.target&&e.target.dataset&&e.target.dataset.i==='bc'){e.preventDefault();A.bcsearch();return}
   if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('.hrow, .csess')){e.preventDefault();(A[e.target.dataset.a]||A.open)(e.target.dataset)}});
+// Sohbet alanına panodan fotoğraf yapıştırma (masaüstü)
+document.addEventListener('paste',e=>{
+  if(!V.chat||V.tab!=='chat'||V.chat.busy||!e.target||e.target.dataset.i!=='chat')return;
+  const files=Array.from((e.clipboardData&&e.clipboardData.files)||[]).filter(f=>/^image\//.test(f.type));
+  if(!files.length)return;
+  e.preventDefault();chatAddImgs(files);
+});
 function jump(v){if(!v||v>TODAY||v===V.date&&V.tab==='today')return;V.date=v;V.tab='today';V.preview=null;V.edit=null;V.undo=null;window.scrollTo(0,0);render()}
 // hedef kilo/tarih değişince kalori hedefini ona göre yeniden hesapla (elle değiştirdiysen dokunmaz)
 function onTargetChange(){
@@ -3223,6 +3278,7 @@ document.addEventListener('change',e=>{
   else if(k==='admdate'){if(t.value&&t.value<=TODAY){V.adm.date=t.value;render()}}
   else if(k==='import'&&t.files&&t.files[0]){importFile(t.files[0]);t.value=''}
   else if(k==='fimg'||k==='simg'){const files=Array.from(t.files||[]),kd=(t.dataset&&t.dataset.kind)||'label';t.value='';addImgs(k==='fimg'?'fimgs':'simgs',files,kd)}
+  else if(k==='chatimg'){const files=Array.from(t.files||[]);t.value='';chatAddImgs(files)}
   else if(k==='pphoto'&&t.files&&t.files[0]){const f=t.files[0],pose=t.dataset.pose;t.value='';A.photoadd(f,pose)}
   else if(k==='bcfile'){const f=(t.files||[])[0];t.value='';if(f)A.bcfromfile(f)}
   else if(k==='saddf'&&t.value){const id=t.dataset.id;(V.sf[id]=V.sf[id]||[]).push(t.value);render()}

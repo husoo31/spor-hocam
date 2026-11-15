@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sh-chat-'));
 const MOCK = 18221, APP = 18220;
-const prompts = [];
+const prompts = [], sentImgs = [];
 let calls = 0;
 
 const mock = http.createServer((req, res) => {
@@ -22,6 +22,7 @@ const mock = http.createServer((req, res) => {
     calls++;
     const body = JSON.parse(b);
     prompts.push(body.contents[0].parts[0].text);
+    sentImgs.push((body.contents[0].parts || []).filter(p => p.inlineData).map(p => p.inlineData.mimeType));
     const n = calls;
     // chat-a yavaş, chat-b hızlı: otomatik seçimin gerçekten hızlıyı seçtiğini ölçebilmek için
     setTimeout(() => {
@@ -77,6 +78,7 @@ try {
   ok(Array.isArray(r.j.models) && r.j.models.length === 2, 'model kataloğu anahtarı olan modelleri listeliyor');
   const ma = (r.j.models || []).find(m => m.key === 'gemini:chat-a');
   ok(ma && ma.provider === 'gemini' && ma.label && !ma.slow, 'model kaydı anahtar, sağlayıcı ve etiket içeriyor');
+  ok(ma && ma.image === true, 'model kaydı fotoğraf okuyabildiğini bildiriyor');
 
   r = await chat({ content: '' });
   ok(r.s === 400 && r.j.code === 'bad_request', 'boş mesaj reddedildi');
@@ -155,6 +157,32 @@ try {
   ok(r.s === 409 && r.j.code === 'exists', 'ikinci kez içe aktarma reddedildi');
   r = await call('POST', '/api/chat/import', { messages: [] }, true);
   ok(r.s === 401, 'oturumsuz içe aktarma 401');
+
+  /* ---- sohbette fotoğraf ---- */
+  const IMG = { mime: 'image/jpeg', data: 'aGVsbG8=' };
+  const THUMB = 'data:image/jpeg;base64,aGVsbG8=';
+  r = await chat({ content: '', images: [IMG], thumbs: [THUMB], context: '' }, 2);
+  ok(r.s === 200 && /^cs[0-9a-f]{16}$/.test(r.j.sessionId), 'yalnızca fotoğrafla yeni sohbet açıldı');
+  const sidImg = r.j.sessionId;
+  ok(r.j.session && r.j.session.title === 'Fotoğraf', 'fotoğraf sohbetinin başlığı üretildi');
+  ok(Array.isArray(r.j.userMessage.images) && r.j.userMessage.images[0] === THUMB, 'fotoğraf önizlemesi yanıtta döndü');
+  ok(sentImgs[sentImgs.length - 1].includes('image/jpeg'), 'fotoğraf modele görsel olarak gönderildi');
+  ok(prompts[prompts.length - 1].includes('fotoğraf gönderdi') && prompts[prompts.length - 1].includes('[fotoğraf]'), 'modele fotoğraf notu ve yer tutucu eklendi');
+
+  r = await call('GET', '/api/chat/sessions/' + sidImg, undefined, 2);
+  ok(r.s === 200 && r.j.messages[0].images && r.j.messages[0].images[0] === THUMB, 'fotoğraf önizlemesi veritabanında kalıcı');
+  ok(!r.j.messages[0].images[0].startsWith('data:image/jpeg;base64,/9j'), 'veritabanına tam boy fotoğraf değil önizleme yazıldı');
+
+  r = await chat({ content: 'beş fotoğraf', images: [IMG, IMG, IMG, IMG, IMG] }, 2);
+  ok(r.s === 400 && r.j.code === 'bad_request', 'en fazla 4 fotoğraf sınırı uygulandı');
+  r = await chat({ content: 'gif', images: [{ mime: 'image/gif', data: 'aGVsbG8=' }] }, 2);
+  ok(r.s === 400 && r.j.code === 'image_rejected', 'desteklenmeyen görsel türü reddedildi');
+  r = await chat({ content: 'bozuk', images: [{ mime: 'image/jpeg', data: '!!!' }] }, 2);
+  ok(r.s === 400 && r.j.code === 'image_rejected', 'geçersiz base64 görsel reddedildi');
+
+  r = await chat({ content: 'bozuk önizleme', thumbs: ['javascript:alert(1)', 'data:text/html;base64,PHNjcmlwdD4='] }, 2);
+  ok(r.s === 200 && !r.j.userMessage.images, 'geçersiz önizlemeler sessizce atıldı');
+  ok(!sentImgs[sentImgs.length - 1].length, 'önizleme görseli modele gönderilmedi');
 
   /* ---- yeniden başlatma sonrası kalıcılık ---- */
   await new Promise(res => { srv.once('exit', res); srv.kill(); });

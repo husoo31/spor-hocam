@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions(
 CREATE INDEX IF NOT EXISTS chat_sessions_user ON chat_sessions(user_id, updated DESC);
 CREATE TABLE IF NOT EXISTS chat_messages(
   id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL,
-  content TEXT NOT NULL, model TEXT, ms INTEGER, created INTEGER NOT NULL);
+  content TEXT NOT NULL, model TEXT, ms INTEGER, images TEXT, created INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS chat_messages_session ON chat_messages(session_id, id);
 CREATE INDEX IF NOT EXISTS chat_messages_user ON chat_messages(user_id);
 `);
@@ -154,6 +154,7 @@ addCol('users', 'ai_limit', 'INTEGER');
 addCol('users', 'last_login', 'INTEGER');
 addCol('users', 'consent', 'TEXT');
 addCol('users', 'sync_hash', 'TEXT'); // iPhone Kısayolları (Apple Sağlık) anahtarının özeti; anahtarın kendisi saklanmaz
+addCol('chat_messages', 'images', 'TEXT'); // sohbette gönderilen fotoğrafların küçük önizlemeleri (data URL JSON dizisi)
 db.exec('CREATE INDEX IF NOT EXISTS users_sync ON users(sync_hash)');
 // Yönetici yoksa (eski sürümden geçiş) en eski hesap yönetici olur
 db.exec(`UPDATE users SET is_admin=1 WHERE id=(SELECT id FROM users ORDER BY created, rowid LIMIT 1)
@@ -215,9 +216,9 @@ const q = {
   chatIns: db.prepare('INSERT INTO chat_sessions(id,user_id,title,created,updated) VALUES(?,?,?,?,?)'),
   chatTouch: db.prepare('UPDATE chat_sessions SET updated=? WHERE id=? AND user_id=?'),
   chatDel: db.prepare('DELETE FROM chat_sessions WHERE id=? AND user_id=?'),
-  chatMsgs: db.prepare('SELECT id,role,content,model,ms,created FROM chat_messages WHERE session_id=? AND user_id=? ORDER BY id'),
+  chatMsgs: db.prepare('SELECT id,role,content,model,ms,images,created FROM chat_messages WHERE session_id=? AND user_id=? ORDER BY id'),
   chatMsgCount: db.prepare('SELECT COUNT(*) AS n FROM chat_messages WHERE session_id=? AND user_id=?'),
-  chatMsgIns: db.prepare('INSERT INTO chat_messages(session_id,user_id,role,content,model,ms,created) VALUES(?,?,?,?,?,?,?)'),
+  chatMsgIns: db.prepare('INSERT INTO chat_messages(session_id,user_id,role,content,model,ms,images,created) VALUES(?,?,?,?,?,?,?,?)'),
   chatMsgsDel: db.prepare('DELETE FROM chat_messages WHERE session_id=? AND user_id=?'),
   chatDelUserMsgs: db.prepare('DELETE FROM chat_messages WHERE user_id=?'),
   chatDelUser: db.prepare('DELETE FROM chat_sessions WHERE user_id=?'),
@@ -618,7 +619,7 @@ function chatModelName(e) {
 function chatCatalog() {
   return fastChatChain().map(e => {
     const k = entryKey(e), s = SPEED.get(k);
-    return { key: k, provider: e.provider, model: e.model, label: chatModelName(e), ms: s && s.n ? s.ms : null, slow: (CHAT_PRIOR[e.provider] || 0) >= 60000 };
+    return { key: k, provider: e.provider, model: e.model, label: chatModelName(e), ms: s && s.n ? s.ms : null, slow: (CHAT_PRIOR[e.provider] || 0) >= 60000, image: canImage(e) };
   });
 }
 function chainState(chain) {
@@ -734,7 +735,37 @@ function chatTitle(text) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   return t.length > 64 ? t.slice(0, 63).trimEnd() + '…' : (t || 'Yeni sohbet');
 }
-const chatMessageOut = m => ({ id: m.id, role: m.role, content: m.content, model: m.model || null, ms: m.ms || null, created: m.created });
+const CHAT_THUMB_MAX = 80000; // önizleme başına azami data URL uzunluğu (küçük JPEG)
+/* Veritabanındaki önizlemeleri güvenli biçimde çözer; bozuk kayıtlar yok sayılır. */
+function chatThumbs(raw) {
+  if (!raw) return [];
+  let a; try { a = JSON.parse(raw); } catch (e) { return []; }
+  if (!Array.isArray(a)) return [];
+  return a.slice(0, 4).filter(t => typeof t === 'string' && t.length <= CHAT_THUMB_MAX && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(t));
+}
+/* İstemciden gelen fotoğrafları doğrular: modele gidecek tam boy görseller ve
+   veritabanında saklanacak küçük önizlemeler ayrı ayrı kontrol edilir. */
+function chatImages(body) {
+  let images = [];
+  if (Array.isArray(body.images) && body.images.length) {
+    if (body.images.length > 4) throw new HttpError(400, 'bad_request', 'En fazla 4 fotoğraf gönderilebilir.');
+    images = body.images.map(i => {
+      if (!i || !IMG_TYPES.includes(i.mime) || typeof i.data !== 'string' || i.data.length > 4_000_000 || !/^[A-Za-z0-9+/=]+$/.test(i.data))
+        throw new HttpError(400, 'image_rejected', 'Fotoğraf okunamadı; JPEG/PNG/WebP olmalı.');
+      return { mime: i.mime, data: i.data };
+    });
+  }
+  const thumbs = Array.isArray(body.thumbs)
+    ? body.thumbs.slice(0, 4).filter(t => typeof t === 'string' && t.length <= CHAT_THUMB_MAX && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(t))
+    : [];
+  return { images, thumbs };
+}
+const chatMessageOut = m => {
+  const out = { id: m.id, role: m.role, content: m.content, model: m.model || null, ms: m.ms || null, created: m.created };
+  const im = chatThumbs(m.images);
+  if (im.length) out.images = im;
+  return out;
+};
 function chatSessionOut(s) {
   return {
     id: s.id, title: s.title, created: s.created, updated: s.updated, count: s.n || 0,
@@ -769,7 +800,7 @@ function chatCleanMessages(raw) {
   if (!out.length) throw new HttpError(400, 'bad_request', 'Mesaj boş.');
   return out;
 }
-function chatPrompt(messages, context) {
+function chatPrompt(messages, context, hasImages) {
   const rules = [
     'Sen Spor Hocam uygulamasının Türkçe spor, beslenme ve yaşam koçu asistanısın.',
     'Kısa, net ve samimi cevap ver; gerekmedikçe 250 kelimeyi geçme.',
@@ -777,15 +808,17 @@ function chatPrompt(messages, context) {
     'Emin olmadığın bilgiyi uydurma; veri eksikse bunu açıkça söyle.',
     'Markdown biçimi kullanma; düz metin yaz, gerekirse • ile maddeler oluştur.',
     'Aşağıdaki kullanıcı özeti gerçek uygulama verisidir; cevabı boy, kilo, hedef ve günlük verilere göre kişiselleştir.',
-  ].join(' ');
+  ];
+  if (hasImages) rules.push('Kullanıcı bu mesajda fotoğraf gönderdi; fotoğraftaki görünenleri (yemek, etiket, vücut, ekipman) dikkate alarak cevap ver. Görselde seçemediğin ayrıntı varsa uydurmak yerine sor.');
   const ctx = context ? `\n\nKullanıcının uygulamadaki özet bilgileri: ${context}` : '';
-  const transcript = messages.map(m => `${m.role === 'user' ? 'Kullanıcı' : 'Asistan'}: ${m.content}`).join('\n');
-  return `${rules}\nBugün: ${today()}${ctx}\n\nSohbet geçmişi:\n${transcript}\nAsistan:`;
+  const transcript = messages.map(m => `${m.role === 'user' ? 'Kullanıcı' : 'Asistan'}: ${m.content || (m.images && m.images.length ? '[fotoğraf]' : '')}`).join('\n');
+  return `${rules.join(' ')}\nBugün: ${today()}${ctx}\n\nSohbet geçmişi:\n${transcript}\nAsistan:`;
 }
 async function handleChat(req, res, user) {
-  const body = await readBody(req, 60000);
+  const body = await readBody(req, 12 * 1024 * 1024);
   const content = typeof body.content === 'string' ? body.content.trim() : '';
-  if (!content) throw new HttpError(400, 'bad_request', 'Mesaj boş.');
+  const { images, thumbs } = chatImages(body);
+  if (!content && !images.length) throw new HttpError(400, 'bad_request', 'Mesaj boş.');
   if (content.length > 4000) throw new HttpError(400, 'bad_request', 'Mesaj çok uzun.');
   const context = typeof body.context === 'string' ? body.context.slice(0, CHAT_CONTEXT_MAX) : '';
   if (!aiEnabled()) throw new HttpError(503, 'ai_disabled', 'Yapay zekâ bu sunucuda ayarlanmamış.');
@@ -810,9 +843,11 @@ async function handleChat(req, res, user) {
     const chosen = all.find(e => entryKey(e) === requested);
     if (chosen) chain = [chosen, ...all.filter(e => e !== chosen)];
   }
+  if (images.length && !chain.some(canImage))
+    throw new HttpError(503, 'image_unsupported', 'Fotoğraf okuyabilen bir model şu an kullanılamıyor; sorunu yazıyla sorabilirsin.');
 
   const prior = sess ? q.chatMsgs.all(sid, user.id).map(chatMessageOut) : [];
-  const messages = chatRecent([...prior, { role: 'user', content }]);
+  const messages = chatRecent([...prior, { role: 'user', content, images: thumbs }]);
 
   const day = today();
   const mine = (q.usageGet.get(day, user.id) || { n: 0 }).n, allToday = q.usageSum.get(day).n;
@@ -825,22 +860,25 @@ async function handleChat(req, res, user) {
     throw new HttpError(429, 'quota', 'Bugünkü ortak yapay zekâ hakkı doldu; hak yarın yenilenir.');
 
   try {
-    const out = await runChain(chain, chatPrompt(messages, context), [], false, 'quick', { timeoutMs: CHAT_TIMEOUT_MS, perMs: CHAT_TIMEOUT_MS });
-    const now = Date.now(), title = sess ? sess.title : chatTitle(content);
+    const out = await runChain(chain, chatPrompt(messages, context, images.length > 0), images, false, 'quick', { timeoutMs: CHAT_TIMEOUT_MS, perMs: CHAT_TIMEOUT_MS });
+    const now = Date.now(), title = sess ? sess.title : chatTitle(content || 'Fotoğraf');
     if (!sess) sid = genChatId();
+    const thumbsJson = thumbs.length ? JSON.stringify(thumbs) : null;
     let umId = null, amId = null;
     tx(() => {
       if (!sess) q.chatIns.run(sid, user.id, title, now, now);
-      const um = q.chatMsgIns.run(sid, user.id, 'user', content, null, null, now);
-      const am = q.chatMsgIns.run(sid, user.id, 'assistant', out.text, out.model, out.ms || null, now + 1);
+      const um = q.chatMsgIns.run(sid, user.id, 'user', content, null, null, thumbsJson, now);
+      const am = q.chatMsgIns.run(sid, user.id, 'assistant', out.text, out.model, out.ms || null, null, now + 1);
       q.chatTouch.run(now + 1, sid, user.id);
       umId = Number(um.lastInsertRowid); amId = Number(am.lastInsertRowid);
     });
     q.usageInc.run(day, user.id);
+    const userMessage = { id: umId, role: 'user', content, created: now };
+    if (thumbs.length) userMessage.images = thumbs;
     return send(res, 200, {
       sessionId: sid, title,
       session: { id: sid, title, created: sess ? sess.created : now, updated: now + 1 },
-      userMessage: { id: umId, role: 'user', content, created: now },
+      userMessage,
       message: { id: amId, role: 'assistant', content: out.text, model: out.model, ms: out.ms || null, created: now + 1 },
     });
   } catch (e) {
@@ -1468,7 +1506,7 @@ async function handleApi(req, res, url) {
     const id = genChatId(), now = Date.now(), title = chatTitle(msgs.find(x => x.role === 'user').content);
     tx(() => {
       q.chatIns.run(id, user.id, title, now, now);
-      msgs.forEach((x, i) => q.chatMsgIns.run(id, user.id, x.role, x.content, x.model, x.ms, now + i));
+      msgs.forEach((x, i) => q.chatMsgIns.run(id, user.id, x.role, x.content, x.model, x.ms, null, now + i));
       q.chatTouch.run(now + msgs.length, id, user.id);
     });
     return send(res, 200, { session: { id, title, created: now, updated: now + msgs.length } });

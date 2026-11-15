@@ -240,6 +240,22 @@ body.chatmode #app{max-width:1040px}
 .cmodel-ico{font-size:12px;flex:none}
 .cform-hint{flex:1;min-width:0;font-size:11px;line-height:1.35}
 .cform-hint b{font-weight:600;color:var(--ink)}
+/* sohbet fotoğrafları */
+.cattach-btn{flex:none;width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-size:17px;line-height:1;cursor:pointer;color:var(--ink);background:var(--soft);transition:background .15s ease,transform .15s ease;align-self:flex-end;margin-bottom:2px}
+.cattach-btn:hover{background:color-mix(in srgb,var(--pro) 15%,var(--soft))}
+.cattach-btn:active{transform:scale(.94)}
+.cattach-btn.off{opacity:.4;pointer-events:none}
+.cattach-strip{display:flex;gap:8px;padding:2px 2px 8px;flex-wrap:wrap;animation:cmsg .25s cubic-bezier(.22,.8,.3,1) both}
+.cattach{position:relative;width:62px;height:62px;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:var(--soft);flex:none}
+.cattach img{width:100%;height:100%;object-fit:cover;display:block}
+.cattach-x{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:50%;border:0;background:rgba(6,10,9,.66);color:#fff;font-size:11px;line-height:1;display:grid;place-items:center;cursor:pointer;transition:background .15s ease,transform .15s ease}
+.cattach-x:hover{background:var(--bad)}
+.cattach-x:active{transform:scale(.9)}
+.msgimgs{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:5px;max-width:320px;margin-bottom:6px}
+.msgimgs:only-child{margin-bottom:0}
+.msgimgs img{width:100%;max-height:240px;object-fit:cover;border-radius:14px;display:block;border:1px solid var(--line);background:var(--soft)}
+.msg.user .msgimgs img{border-color:transparent}
+@media(max-width:420px){.cattach{width:54px;height:54px}.msgimgs{grid-template-columns:repeat(auto-fit,minmax(84px,1fr))}}
 @keyframes cmsg{from{opacity:0;transform:translateY(9px) scale(.985)}to{opacity:1;transform:none}}
 @keyframes cfloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
 @keyframes shimmer{from{background-position:200% 0}to{background-position:-200% 0}}
