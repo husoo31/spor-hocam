@@ -147,4 +147,10 @@ window.CHANGELOG = [
       ['iyi', 'Eski sürümde cihazda tutulan sohbet geçmişi ilk açılışta sunucuya aktarılır; sonrasında tüm cihazlarda görünür. AI_CHAT_MODELS ile sohbet model listesi özelleştirilebilir.'],
       ['fix', 'Sohbet sayısı 200, oturum başına mesaj 600 ve mesaj uzunluğu 4.000 karakterle sınırlandı; çok uzun sohbette yeni sohbet başlatılması istenir.']],
     commits: [['78c8864', '2026-11-15 14:55', 'Sohbet: kalici oturumlar, model secimi ve yeni arayuz (v0.25)']] },
+  { v: 'v0.26', d: '2026-11-15 15:46', title: 'Sohbette fotoğraf gönderme', items: [
+      ['yeni', 'Sohbet giriş alanına 📷 fotoğraf düğmesi eklendi. En fazla 4 fotoğraf seçilebilir; masaüstünde panodan yapıştırma da çalışır. Fotoğraflar gönderilmeden önce tarayıcıda 1280 px JPEG\'e küçültülür.'],
+      ['yeni', 'Fotoğraflı mesajda görüntü okuyabilen model (Gemini, OpenRouter, Mistral veya görüntü destekli Groq) otomatik seçilir; hiçbiri kullanılamıyorsa mesaj gönderilmeden net bir uyarı gösterilir.'],
+      ['iyi', 'Fotoğraflar sohbet balonunda küçük önizlemelerle görünür ve sohbet geçmişinde kalır. Veritabanına tam boy fotoğraf değil, yalnızca küçük önizleme yazılır; disk şişmez.'],
+      ['iyi', 'Mesaj metni yazmadan yalnızca fotoğrafla da soru gönderilebilir. Gönderim başarısız olursa yazı ve fotoğraflar giriş alanına geri yüklenir; model yanıtın altında adı ve süresiyle görünür.']],
+    commits: [['e233ab8', '2026-11-15 15:44', 'Sohbet: fotografli mesaj gonderme (v0.26)']] },
 ];
