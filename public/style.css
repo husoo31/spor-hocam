@@ -158,7 +158,24 @@ input[type=checkbox]{width:22px;height:22px}
 .syspanel .ms{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:600}
 
 /* sohbet: ChatGPT benzeri oturum paneli, akıcı mesajlar ve model seçici */
-body.chatmode #app{max-width:1040px}
+/* sohbet sekmesi tam ekran: sitenin içinde site gibi durmasın */
+body.chatmode{overflow:hidden}
+body.chatmode #app{max-width:none;padding:0;height:calc(var(--vvh,100dvh) - env(safe-area-inset-top,0px));display:flex;flex-direction:column;overflow:hidden}
+body.chatmode .svw{flex:none;margin:0;padding:7px 14px 6px;border-bottom:1px solid var(--line)}
+body.chatmode .syspanel{flex:none;margin:0 14px;max-height:42%;overflow-y:auto}
+body.chatmode .chatwrap{flex:1;min-height:0;height:auto;margin:0}
+body.chatmode .cmain{border:0;border-radius:0;box-shadow:none}
+body.chatmode .tabs{position:static;flex:none;border-top:1px solid var(--line)}
+body.chatmode .tabs>div{max-width:100%}
+body.chatmode .chatbox{padding:14px 16px 10px}
+body.chatmode .cform{padding-bottom:12px}
+@media(min-width:900px){
+  body.chatmode .chatwrap{grid-template-columns:280px minmax(0,1fr);gap:0}
+  body.chatmode .cside{border-radius:0;border:0;border-right:1px solid var(--line)}
+  body.chatmode .chatbox{padding:18px 26px 12px}
+  body.chatmode .cform{padding:10px 26px 14px}
+  body.chatmode .ctop{padding:10px 22px}
+}
 .chatwrap{position:relative;display:grid;grid-template-columns:minmax(0,1fr);height:calc(var(--vvh,100dvh) - 150px);min-height:260px;margin-top:2px}
 .cmain{display:flex;flex-direction:column;min-width:0;height:100%;background:var(--card);border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.05)}
 .ctop{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);position:relative;z-index:2}
