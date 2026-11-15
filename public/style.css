@@ -152,27 +152,104 @@ input[type=checkbox]{width:22px;height:22px}
 .syspanel .srow i{width:10px;height:10px;border-radius:50%;flex:none}
 .syspanel .ms{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:600}
 
-/* sohbet sekmesi */
-.chathead p{max-width:46ch}
-.chatbox{display:flex;flex-direction:column;gap:10px;padding:2px 0 10px;min-height:120px}
-.chatstart{padding:4px 0 8px}
-.chatsug{display:flex;flex-wrap:wrap;gap:2px}
-.chatsug .chip{text-align:left;white-space:normal;line-height:1.3}
-.msg{display:flex;flex-direction:column;max-width:88%}
+/* sohbet: ChatGPT benzeri oturum paneli, akıcı mesajlar ve model seçici */
+body.chatmode #app{max-width:1040px}
+.chatwrap{position:relative;display:grid;grid-template-columns:minmax(0,1fr);height:calc(var(--vvh,100dvh) - 150px);min-height:260px;margin-top:2px}
+.cmain{display:flex;flex-direction:column;min-width:0;height:100%;background:var(--card);border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.05)}
+.ctop{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);position:relative;z-index:2}
+.ctop-t{flex:1;min-width:0}
+.ctitle{font-weight:700;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctop-new{font-size:20px;line-height:1;padding:2px 10px;border-radius:10px;color:var(--pro)}
+.cmenu{font-size:18px;padding:4px 8px;border-radius:10px}
+/* sol panel */
+.cside{position:absolute;z-index:9;inset:0 auto 0 0;width:min(84%,320px);display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:0 22px 60px rgba(0,0,0,.3);overflow:hidden;transform:translateX(-104%);opacity:0;pointer-events:none;transition:transform .3s cubic-bezier(.32,.72,0,1),opacity .22s ease}
+.chatwrap.side-open .cside{transform:none;opacity:1;pointer-events:auto}
+.cside-scrim{position:absolute;inset:0;z-index:8;border-radius:20px;background:rgba(6,10,9,.45);opacity:0;pointer-events:none;transition:opacity .22s ease}
+.chatwrap.side-open .cside-scrim{opacity:1;pointer-events:auto}
+.cside-top{display:flex;align-items:center;gap:6px;padding:10px}
+.cnew{flex:1;justify-content:center;border-radius:12px;gap:6px}
+.cside-close{font-size:15px;border-radius:9px;padding:6px 9px}
+.cside-head{padding:2px 16px 6px;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+.cside-list{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:0 8px 8px;scrollbar-width:thin}
+.cside-foot{padding:10px 14px;border-top:1px solid var(--line);line-height:1.4}
+.cside-empty{padding:22px 12px;font-size:12.5px;color:var(--mut);line-height:1.6;text-align:center}
+.cside-load{padding:10px 6px;display:flex;flex-direction:column;gap:9px}
+.cgroup{margin-top:4px}
+.cgroup-t{padding:9px 7px 4px;font-size:11px;font-weight:600;color:var(--mut)}
+.csess{position:relative;display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:11px;cursor:pointer;color:var(--ink);transition:background .15s ease,transform .15s ease}
+.csess:hover{background:var(--soft)}
+.csess:active{transform:scale(.985)}
+.csess.on{background:color-mix(in srgb,var(--pro) 13%,var(--soft))}
+.csess-ico{flex:none;width:22px;height:22px;border-radius:7px;background:var(--soft);display:grid;place-items:center;font-size:11px;transition:background .15s}
+.csess.on .csess-ico{background:color-mix(in srgb,var(--pro) 24%,transparent)}
+.csess-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.csess-t{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.csess-p{font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.csess-x{flex:none;opacity:0;font-size:12px;padding:2px 5px;border-radius:7px;transition:opacity .15s}
+.csess:hover .csess-x,.csess:focus-within .csess-x{opacity:.7}
+@media(hover:none){.csess-x{opacity:.45}}
+@media(min-width:900px){
+  .chatwrap{grid-template-columns:262px minmax(0,1fr);gap:14px}
+  .cside{position:relative;inset:auto;width:auto;height:100%;transform:none;opacity:1;pointer-events:auto;box-shadow:none;transition:none}
+  .cside-scrim,.cmenu,.cside-close{display:none}
+}
+/* mesajlar */
+.chatbox{flex:1;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:12px;padding:16px 14px 10px;scroll-behavior:smooth;scrollbar-width:thin}
+.msg{display:flex;flex-direction:column;max-width:min(88%,660px);animation:cmsg .34s cubic-bezier(.22,.8,.3,1) both}
 .msg.user{align-self:flex-end;align-items:flex-end}
 .msg.ai{align-self:flex-start;align-items:flex-start}
-.bubble{padding:10px 13px;border-radius:16px;font-size:14.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
-.msg.user .bubble{background:var(--ink);color:var(--bg);border-bottom-right-radius:4px}
-.msg.ai .bubble{background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px}
+.bubble{padding:11px 14px;border-radius:18px;font-size:14.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+.msg.user .bubble{background:linear-gradient(135deg,var(--pro),color-mix(in srgb,var(--pro) 70%,var(--sl-rem)));color:#fff;border-bottom-right-radius:6px;box-shadow:0 8px 20px -12px color-mix(in srgb,var(--pro) 80%,transparent)}
+.msg.ai .bubble{background:var(--bg);border:1px solid var(--line);border-bottom-left-radius:6px}
 .msg.ai .bubble.err{background:color-mix(in srgb,var(--bad) 10%,var(--card));border-color:var(--bad);color:var(--ink)}
-.msgmeta{font-size:11px;color:var(--mut);margin:3px 5px 0}
-.chatinput{display:flex;gap:8px;align-items:flex-end;padding:6px 0 2px;background:var(--bg)}
-.chatinput textarea{flex:1;min-height:48px;max-height:120px;resize:none;border:1.5px solid var(--line);background:var(--card);border-radius:14px;padding:12px 14px;font-size:16px;line-height:1.35}
-.chatinput .btn{min-width:78px;padding:12px 14px;border-radius:14px}
+.msgmeta{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--mut);margin:5px 6px 0}
+.mdot{width:5px;height:5px;border-radius:50%;background:var(--fat);display:inline-block;flex:none}
+.chatstart{margin:auto;text-align:center;padding:18px 6px;max-width:540px;animation:cmsg .45s cubic-bezier(.22,.8,.3,1) both}
+.chatstart-ico{font-size:36px;line-height:1;margin-bottom:10px;filter:drop-shadow(0 8px 16px color-mix(in srgb,var(--pro) 32%,transparent));animation:cfloat 4s ease-in-out infinite}
+.chatstart h3{margin:0 0 6px;font-size:18px}
+.chatstart p{margin:0 auto;max-width:44ch;line-height:1.5}
+.chatsug{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:16px}
+.chatsug .chip{text-align:left;white-space:normal;line-height:1.35;background:var(--card);transition:transform .16s ease,border-color .16s ease,background .16s ease}
+.chatsug .chip:hover{transform:translateY(-1px);border-color:color-mix(in srgb,var(--pro) 45%,var(--line))}
+.chatsug .chip:active{transform:scale(.97)}
+.chat-off{margin:14px;padding:12px 14px;border-radius:13px;background:var(--soft);font-size:12.5px;line-height:1.5;color:var(--ink)}
+.cmsg-load{display:flex;flex-direction:column;gap:10px;padding:4px 2px}
+.cmsg-load .skel{height:44px;width:68%;border-radius:16px}
+.cmsg-load .skel.wide{width:86%}
+.skel{display:block;height:12px;border-radius:6px;background:linear-gradient(90deg,var(--soft),color-mix(in srgb,var(--soft) 45%,var(--card)),var(--soft));background-size:200% 100%;animation:shimmer 1.3s linear infinite}
+.skel.wide{width:86%}
+/* yazma göstergesi */
 .typing{display:flex;gap:5px;align-items:center;min-height:20px}
 .typing span{width:6px;height:6px;border-radius:50%;background:var(--mut);display:inline-block;animation:chatdot 1s infinite}
 .typing span:nth-child(2){animation-delay:.15s}
 .typing span:nth-child(3){animation-delay:.3s}
+/* giriş alanı + model seçici (sol alt) */
+.cform{padding:8px 12px 10px;border-top:1px solid var(--line);background:var(--card)}
+.cform-box{display:flex;align-items:flex-end;gap:8px;background:var(--bg);border:1.5px solid var(--line);border-radius:18px;padding:5px 5px 5px 12px;transition:border-color .18s ease,box-shadow .18s ease}
+.cform-box:focus-within{border-color:color-mix(in srgb,var(--pro) 55%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--pro) 15%,transparent)}
+.cform textarea{flex:1;min-height:34px;max-height:120px;resize:none;border:0;background:none;color:var(--ink);padding:7px 0;font-size:16px;line-height:1.4;outline:none}
+.csend{flex:none;width:38px;height:38px;border-radius:50%;border:0;background:var(--pro);color:#fff;font-size:18px;font-weight:700;display:grid;place-items:center;transition:transform .15s ease,opacity .15s ease}
+.csend:disabled{opacity:.55;cursor:default}
+.csend:not(:disabled):active{transform:scale(.93)}
+.csend-busy{width:15px;height:15px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+.cform-foot{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.cmodel{position:relative;display:inline-flex;align-items:center;gap:5px;padding:0 9px;height:30px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:12px;font-weight:600;cursor:pointer;max-width:64%;transition:border-color .16s ease,background .16s ease}
+.cmodel:hover{border-color:color-mix(in srgb,var(--pro) 45%,var(--line));background:color-mix(in srgb,var(--pro) 7%,var(--card))}
+.cmodel select{appearance:none;-webkit-appearance:none;border:0;background:none;color:inherit;font:inherit;padding:0 16px 0 0;max-width:100%;outline:none;cursor:pointer;text-overflow:ellipsis}
+.cmodel-caret{position:absolute;right:8px;pointer-events:none;color:var(--mut);font-size:12px}
+.cmodel-ico{font-size:12px;flex:none}
+.cform-hint{flex:1;min-width:0;font-size:11px;line-height:1.35}
+.cform-hint b{font-weight:600;color:var(--ink)}
+@keyframes cmsg{from{opacity:0;transform:translateY(9px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes cfloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+@keyframes shimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+@keyframes spin{to{transform:rotate(360deg)}}
 @keyframes chatdot{0%,60%,100%{opacity:.25;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
-@media (prefers-reduced-motion:reduce){.typing span{animation:none;opacity:.55}}
+@media (prefers-reduced-motion:reduce){
+  .msg,.chatstart{animation:none}
+  .chatstart-ico{animation:none}
+  .skel{animation:none}
+  .typing span{animation:none;opacity:.55}
+  .chatbox{scroll-behavior:auto}
+}
 @media (max-width:359px){.tabs button{font-size:9.5px}.tabs button span{font-size:17px}}

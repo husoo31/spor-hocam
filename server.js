@@ -32,6 +32,11 @@ const CHAINS = {
   quick: parseChain(env.AI_CHAIN_QUICK || env.AI_CHAIN || DEFAULT_CHAIN),
   complex: parseChain(env.AI_CHAIN_COMPLEX || env.AI_CHAIN || DEFAULT_CHAIN),
 };
+// Sohbette ayrıca seçilebilecek ücretsiz modeller. Anahtarı tanımlı olmayanlar listelenmez.
+// Yönetici kendi listesini AI_CHAT_MODELS ile verebilir (boş bırakılırsa yalnızca zincirdekiler kullanılır).
+const CHAT_EXTRA = parseChain(env.AI_CHAT_MODELS === undefined
+  ? 'nvidia:deepseek-ai/deepseek-v4.1-flash,mistral:open-mistral-nemo,mistral:mistral-small-latest,cerebras:llama3.3-70b'
+  : env.AI_CHAT_MODELS);
 const IMG_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const USERNAME_RE = /^[\p{L}\p{N}._-]{3,24}$/u;
 const DOC_ID_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -130,6 +135,14 @@ CREATE TABLE IF NOT EXISTS push_subs(
   cfg TEXT NOT NULL DEFAULT '{}', state TEXT NOT NULL DEFAULT '{}', created INTEGER NOT NULL, last_ok INTEGER, fails INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS push_user ON push_subs(user_id);
 CREATE TABLE IF NOT EXISTS push_log(sub_id TEXT NOT NULL, key TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(sub_id,key));
+CREATE TABLE IF NOT EXISTS chat_sessions(
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS chat_sessions_user ON chat_sessions(user_id, updated DESC);
+CREATE TABLE IF NOT EXISTS chat_messages(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL,
+  content TEXT NOT NULL, model TEXT, ms INTEGER, created INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS chat_messages_session ON chat_messages(session_id, id);
+CREATE INDEX IF NOT EXISTS chat_messages_user ON chat_messages(user_id);
 `);
 function addCol(table, col, def) {
   if (!db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
@@ -193,6 +206,21 @@ const q = {
   setLogin: db.prepare('UPDATE users SET last_login=? WHERE id=?'),
   adminCount: db.prepare('SELECT COUNT(*) AS n FROM users WHERE is_admin=1 AND disabled=0'),
   delUsage: db.prepare('DELETE FROM ai_usage WHERE user_id=?'),
+  chatList: db.prepare(`SELECT s.id,s.title,s.created,s.updated,
+    (SELECT COUNT(*) FROM chat_messages m WHERE m.session_id=s.id) AS n,
+    (SELECT m.content FROM chat_messages m WHERE m.session_id=s.id AND m.role='user' ORDER BY m.id DESC LIMIT 1) AS preview
+    FROM chat_sessions s WHERE s.user_id=? ORDER BY s.updated DESC LIMIT 200`),
+  chatGet: db.prepare('SELECT * FROM chat_sessions WHERE id=? AND user_id=?'),
+  chatCount: db.prepare('SELECT COUNT(*) AS n FROM chat_sessions WHERE user_id=?'),
+  chatIns: db.prepare('INSERT INTO chat_sessions(id,user_id,title,created,updated) VALUES(?,?,?,?,?)'),
+  chatTouch: db.prepare('UPDATE chat_sessions SET updated=? WHERE id=? AND user_id=?'),
+  chatDel: db.prepare('DELETE FROM chat_sessions WHERE id=? AND user_id=?'),
+  chatMsgs: db.prepare('SELECT id,role,content,model,ms,created FROM chat_messages WHERE session_id=? AND user_id=? ORDER BY id'),
+  chatMsgCount: db.prepare('SELECT COUNT(*) AS n FROM chat_messages WHERE session_id=? AND user_id=?'),
+  chatMsgIns: db.prepare('INSERT INTO chat_messages(session_id,user_id,role,content,model,ms,created) VALUES(?,?,?,?,?,?,?)'),
+  chatMsgsDel: db.prepare('DELETE FROM chat_messages WHERE session_id=? AND user_id=?'),
+  chatDelUserMsgs: db.prepare('DELETE FROM chat_messages WHERE user_id=?'),
+  chatDelUser: db.prepare('DELETE FROM chat_sessions WHERE user_id=?'),
   cacheCount: db.prepare('SELECT COUNT(*) AS n FROM ai_cache'),
   foodCacheCount: db.prepare('SELECT COUNT(*) AS n FROM food_cache'),
   adminUsers: db.prepare(`SELECT u.id,u.username,u.created,u.is_admin,u.disabled,u.must_change,u.ai_limit,u.last_login,
@@ -520,7 +548,7 @@ const PROVIDERS = { gemini: callGemini, openrouter: callOpenAICompat('openrouter
 const KEY_ENV = { gemini: 'GEMINI_API_KEY', openrouter: 'OPENROUTER_API_KEY', groq: 'GROQ_API_KEY', cerebras: 'CEREBRAS_API_KEY', mistral: 'MISTRAL_API_KEY', nvidia: 'NVIDIA_API_KEY' };
 // Fotoğraf okuyabilir mi? Gemini/OpenRouter/Mistral evet; NVIDIA DeepSeek ve Cerebras hayır; Groq yalnızca görüntü destekli modellerde (scout/maverick/vision/qwen3.5+; gpt-oss metin modelidir)
 const canImage = e => !['nvidia', 'cerebras'].includes(e.provider) && (e.provider !== 'groq' || /scout|maverick|vision|llava|qwen\/qwen3\.[5-9]/i.test(e.model));
-const aiEnabled = () => Object.values(CHAINS).some(ch => ch.some(e => PROVIDERS[e.provider] && env[KEY_ENV[e.provider]]));
+const aiEnabled = () => [...Object.values(CHAINS), CHAT_EXTRA].some(ch => ch.some(e => PROVIDERS[e.provider] && env[KEY_ENV[e.provider]]));
 
 /* ---- devre kesici: bozuk bir model her istekte zaman kaybettirmesin ----
    Hata türüne göre geçici dışlanır (429: 1 dk→30 dk, 404/401/403: 5 dk→6 sa, 5xx/zaman aşımı: 15 sn→5 dk); başarıyla sıfırlanır.
@@ -561,12 +589,37 @@ function noteSpeed(e, ms) {
 }
 function fastChatChain() {
   const seen = new Set(), entries = [];
-  for (const ch of [CHAINS.quick, CHAINS.default, CHAINS.complex]) for (const e of ch) {
+  for (const ch of [...Object.values(CHAINS), CHAT_EXTRA]) for (const e of ch) {
     const k = entryKey(e);
     if (seen.has(k) || !PROVIDERS[e.provider] || !env[KEY_ENV[e.provider]]) continue;
     seen.add(k); entries.push(e);
   }
   return entries.map((e, i) => ({ e, i })).sort((a, b) => speedScore(a.e, a.i) - speedScore(b.e, b.i)).map(x => x.e);
+}
+const MODEL_NAMES = {
+  'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
+  'gemini-3.5-flash-lite': 'Gemini 3.5 Flash Lite',
+  'gemini-3.5-flash': 'Gemini 3.5 Flash',
+  'openai/gpt-oss-120b': 'GPT-OSS 120B',
+  'openai/gpt-oss-20b': 'GPT-OSS 20B',
+  'qwen/qwen3.8-27b': 'Qwen 3.8 27B',
+  'openrouter/free': 'OpenRouter Free',
+  'deepseek-ai/deepseek-v4.1-flash': 'DeepSeek V4.1 Flash',
+  'open-mistral-nemo': 'Mistral Nemo',
+  'mistral-small-latest': 'Mistral Small',
+  'llama3.3-70b': 'Llama 3.3 70B',
+};
+const PROVIDER_NAMES = { gemini: 'Gemini', openrouter: 'OpenRouter', groq: 'Groq', cerebras: 'Cerebras', mistral: 'Mistral', nvidia: 'NVIDIA' };
+function chatModelName(e) {
+  const base = MODEL_NAMES[e.model] || e.model.split('/').pop().replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  const pn = PROVIDER_NAMES[e.provider] || e.provider;
+  return base.toLocaleLowerCase('tr-TR').includes(pn.toLocaleLowerCase('tr-TR')) ? base : `${pn} ${base}`;
+}
+function chatCatalog() {
+  return fastChatChain().map(e => {
+    const k = entryKey(e), s = SPEED.get(k);
+    return { key: k, provider: e.provider, model: e.model, label: chatModelName(e), ms: s && s.n ? s.ms : null, slow: (CHAT_PRIOR[e.provider] || 0) >= 60000 };
+  });
 }
 function chainState(chain) {
   return chain.filter(e => PROVIDERS[e.provider] && env[KEY_ENV[e.provider]]).map(e => {
@@ -671,23 +724,49 @@ async function handleAi(req, res, user) {
 }
 
 /* ------------------------------------------------------------------ sohbet
-   Kullanıcı model seçmez. Gelen mesaj, o an ölçülen yanıt süresi en kısa olan sağlıklı modele gider;
-   model düşerse/hata verirse sıradaki en hızlı model devralır. Sohbet geçmişi istemcide tutulur. */
-function chatMessages(raw) {
-  if (!Array.isArray(raw) || !raw.length) throw new HttpError(400, 'bad_request', 'Mesaj boş.');
-  if (raw.length > 24) raw = raw.slice(-24);
+   Model varsayılan olarak otomatiktir: o an ölçülen süresi en kısa olan sağlıklı model cevap verir.
+   Kullanıcı isterse listeden model seçebilir; seçilen model hata verirse sıradaki en hızlı model devralır.
+   Sohbetler kullanıcıya ait oturumlar olarak SQLite'ta saklanır; güncellemelerde silinmez. */
+const CHAT_ID_RE = /^cs[0-9a-f]{16}$/;
+const CHAT_MAX_SESSIONS = 200, CHAT_MAX_MESSAGES = 600, CHAT_CONTEXT_MAX = 4000;
+const genChatId = () => 'cs' + rnd(8).toString('hex');
+function chatTitle(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  return t.length > 64 ? t.slice(0, 63).trimEnd() + '…' : (t || 'Yeni sohbet');
+}
+const chatMessageOut = m => ({ id: m.id, role: m.role, content: m.content, model: m.model || null, ms: m.ms || null, created: m.created });
+function chatSessionOut(s) {
+  return {
+    id: s.id, title: s.title, created: s.created, updated: s.updated, count: s.n || 0,
+    preview: s.preview ? String(s.preview).replace(/\s+/g, ' ').slice(0, 90) : '',
+  };
+}
+/* Modele gönderilecek geçmiş: son 30 mesaj ve ~28 bin karakter. Eski mesajlar veritabanında kalır. */
+function chatRecent(messages, maxN, maxChars) {
+  maxN = maxN || 30; maxChars = maxChars || 28000;
   const out = []; let total = 0;
-  for (const m of raw) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (out.length >= maxN) break;
+    const m = messages[i], size = m.content.length;
+    if (total + size > maxChars && out.length) break;
+    out.unshift(m); total += size;
+  }
+  return out;
+}
+/* İçe aktarma isteğini doğrular. Son mesaj asistan olabilir (eski cihaz geçmişi). */
+function chatCleanMessages(raw) {
+  if (!Array.isArray(raw) || !raw.length) throw new HttpError(400, 'bad_request', 'Mesaj boş.');
+  const out = []; let total = 0;
+  for (const m of raw.slice(-100)) {
     const role = m && m.role === 'assistant' ? 'assistant' : 'user';
     const content = m && typeof m.content === 'string' ? m.content.trim() : '';
     if (!content) continue;
-    if (content.length > 4000) throw new HttpError(400, 'bad_request', 'Mesaj çok uzun.');
+    if (content.length > 8000) throw new HttpError(400, 'bad_request', 'Mesaj çok uzun.');
     total += content.length;
-    if (total > 24000) throw new HttpError(400, 'bad_request', 'Sohbet çok uzun; yeni bir sohbet başlat.');
-    out.push({ role, content });
+    if (total > 60000) throw new HttpError(400, 'bad_request', 'Sohbet çok uzun.');
+    out.push({ role, content, model: role === 'assistant' && m.model ? String(m.model).slice(0, 120) : null, ms: role === 'assistant' && Number(m.ms) > 0 ? Math.min(Number(m.ms), 600000) : null });
   }
   if (!out.length) throw new HttpError(400, 'bad_request', 'Mesaj boş.');
-  if (out[out.length - 1].role !== 'user') throw new HttpError(400, 'bad_request', 'Son mesaj kullanıcıdan olmalı.');
   return out;
 }
 function chatPrompt(messages, context) {
@@ -696,34 +775,74 @@ function chatPrompt(messages, context) {
     'Kısa, net ve samimi cevap ver; gerekmedikçe 250 kelimeyi geçme.',
     'Kullanıcıya tıbbi teşhis koyma, ilaç dozu önerme; ciddi belirtilerde uzmana yönlendir.',
     'Emin olmadığın bilgiyi uydurma; veri eksikse bunu açıkça söyle.',
-    'Gerekirse maddeler hâlinde yaz. Markdown tablosu kullanma.',
+    'Markdown biçimi kullanma; düz metin yaz, gerekirse • ile maddeler oluştur.',
+    'Aşağıdaki kullanıcı özeti gerçek uygulama verisidir; cevabı boy, kilo, hedef ve günlük verilere göre kişiselleştir.',
   ].join(' ');
-  const ctx = context ? `\nKullanıcının uygulamadaki özet bilgileri: ${context}` : '';
+  const ctx = context ? `\n\nKullanıcının uygulamadaki özet bilgileri: ${context}` : '';
   const transcript = messages.map(m => `${m.role === 'user' ? 'Kullanıcı' : 'Asistan'}: ${m.content}`).join('\n');
-  return `${rules}${ctx}\n\nSohbet geçmişi:\n${transcript}\nAsistan:`;
+  return `${rules}\nBugün: ${today()}${ctx}\n\nSohbet geçmişi:\n${transcript}\nAsistan:`;
 }
 async function handleChat(req, res, user) {
   const body = await readBody(req, 60000);
-  const messages = chatMessages(body.messages);
-  const context = typeof body.context === 'string' ? body.context.slice(0, 3000) : '';
+  const content = typeof body.content === 'string' ? body.content.trim() : '';
+  if (!content) throw new HttpError(400, 'bad_request', 'Mesaj boş.');
+  if (content.length > 4000) throw new HttpError(400, 'bad_request', 'Mesaj çok uzun.');
+  const context = typeof body.context === 'string' ? body.context.slice(0, CHAT_CONTEXT_MAX) : '';
   if (!aiEnabled()) throw new HttpError(503, 'ai_disabled', 'Yapay zekâ bu sunucuda ayarlanmamış.');
-  const chain = fastChatChain();
-  if (!chain.length) throw new HttpError(503, 'ai_disabled', 'Yapay zekâ bu sunucuda ayarlanmamış.');
+
+  let sid = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+  let sess = null;
+  if (sid) {
+    if (!CHAT_ID_RE.test(sid)) throw new HttpError(400, 'bad_request', 'Geçersiz sohbet.');
+    sess = q.chatGet.get(sid, user.id);
+    if (!sess) throw new HttpError(404, 'not_found', 'Sohbet bulunamadı.');
+    if (q.chatMsgCount.get(sid, user.id).n >= CHAT_MAX_MESSAGES)
+      throw new HttpError(409, 'full', 'Bu sohbet çok uzun; yeni bir sohbet başlat.');
+  } else if (q.chatCount.get(user.id).n >= CHAT_MAX_SESSIONS) {
+    throw new HttpError(409, 'full', 'Sohbet sayısı sınırına ulaşıldı; eski sohbetlerden birini sil.');
+  }
+
+  const all = fastChatChain();
+  if (!all.length) throw new HttpError(503, 'ai_disabled', 'Yapay zekâ bu sunucuda ayarlanmamış.');
+  const requested = String(body.model || 'auto');
+  let chain = all;
+  if (requested && requested !== 'auto') {
+    const chosen = all.find(e => entryKey(e) === requested);
+    if (chosen) chain = [chosen, ...all.filter(e => e !== chosen)];
+  }
+
+  const prior = sess ? q.chatMsgs.all(sid, user.id).map(chatMessageOut) : [];
+  const messages = chatRecent([...prior, { role: 'user', content }]);
 
   const day = today();
-  const mine = (q.usageGet.get(day, user.id) || { n: 0 }).n, all = q.usageSum.get(day).n;
+  const mine = (q.usageGet.get(day, user.id) || { n: 0 }).n, allToday = q.usageSum.get(day).n;
   const userLimit = user.ai_limit !== null && user.ai_limit !== undefined ? Number(user.ai_limit) : Number(getSetting('ai_user_limit'));
   if (mine >= userLimit)
     throw new HttpError(429, 'quota', userLimit === 0
       ? 'Yapay zekâ bu hesapta kapalı.'
       : `Bugünkü yapay zekâ hakkın doldu (${userLimit} çağrı); hak yarın yenilenir.`);
-  if (all >= Number(getSetting('ai_global_limit')))
+  if (allToday >= Number(getSetting('ai_global_limit')))
     throw new HttpError(429, 'quota', 'Bugünkü ortak yapay zekâ hakkı doldu; hak yarın yenilenir.');
 
   try {
     const out = await runChain(chain, chatPrompt(messages, context), [], false, 'quick', { timeoutMs: CHAT_TIMEOUT_MS, perMs: CHAT_TIMEOUT_MS });
+    const now = Date.now(), title = sess ? sess.title : chatTitle(content);
+    if (!sess) sid = genChatId();
+    let umId = null, amId = null;
+    tx(() => {
+      if (!sess) q.chatIns.run(sid, user.id, title, now, now);
+      const um = q.chatMsgIns.run(sid, user.id, 'user', content, null, null, now);
+      const am = q.chatMsgIns.run(sid, user.id, 'assistant', out.text, out.model, out.ms || null, now + 1);
+      q.chatTouch.run(now + 1, sid, user.id);
+      umId = Number(um.lastInsertRowid); amId = Number(am.lastInsertRowid);
+    });
     q.usageInc.run(day, user.id);
-    return send(res, 200, { text: out.text, model: out.model, ms: out.ms || null });
+    return send(res, 200, {
+      sessionId: sid, title,
+      session: { id: sid, title, created: sess ? sess.created : now, updated: now + 1 },
+      userMessage: { id: umId, role: 'user', content, created: now },
+      message: { id: amId, role: 'assistant', content: out.text, model: out.model, ms: out.ms || null, created: now + 1 },
+    });
   } catch (e) {
     const code = e.code || 'upstream_error';
     const msgs = {
@@ -987,7 +1106,7 @@ async function handleAdmin(req, res, p, m, cu, ip) {
     }
     if (action === 'wipe-data') {
       await adminPw(admin, b.adminPassword, ip);
-      q.delDocs.run(target.id);
+      q.delDocs.run(target.id); q.chatDelUserMsgs.run(target.id); q.chatDelUser.run(target.id);
       logAdmin(admin.id, target.id, 'wipe_data');
       return send(res, 200, { ok: true });
     }
@@ -996,7 +1115,7 @@ async function handleAdmin(req, res, p, m, cu, ip) {
       await adminPw(admin, b.adminPassword, ip);
       if (target.is_admin && q.adminCount.get().n <= 1) throw new HttpError(409, 'last_admin', 'Son yönetici silinemez.');
       logAdmin(admin.id, null, 'delete_user', { username: target.username });
-      tx(() => { q.delDocs.run(target.id); q.delUserSess.run(target.id); q.delUsage.run(target.id); q.pushDelUser.run(target.id); q.delUser.run(target.id); });
+      tx(() => { q.delDocs.run(target.id); q.chatDelUserMsgs.run(target.id); q.chatDelUser.run(target.id); q.delUserSess.run(target.id); q.delUsage.run(target.id); q.pushDelUser.run(target.id); q.delUser.run(target.id); });
       return send(res, 200, { ok: true });
     }
   }
@@ -1336,6 +1455,40 @@ async function handleApi(req, res, url) {
     const { user } = requireUser(req);
     return handleAi(req, res, user);
   }
+  if (p === '/api/chat/sessions' && m === 'GET') {
+    const { user } = requireUser(req);
+    return send(res, 200, { sessions: q.chatList.all(user.id).map(chatSessionOut), models: chatCatalog() });
+  }
+  if (p === '/api/chat/import' && m === 'POST') { // eski cihazdaki geçmişi bir kez sunucuya taşır
+    const { user } = requireUser(req);
+    const b = await readBody(req, 1024 * 1024);
+    if (q.chatCount.get(user.id).n) throw new HttpError(409, 'exists', 'Sohbet geçmişi zaten sunucuda.');
+    const msgs = chatCleanMessages(b.messages);
+    if (!msgs.some(x => x.role === 'user')) throw new HttpError(400, 'bad_request', 'Sohbet geçmişinde kullanıcı mesajı yok.');
+    const id = genChatId(), now = Date.now(), title = chatTitle(msgs.find(x => x.role === 'user').content);
+    tx(() => {
+      q.chatIns.run(id, user.id, title, now, now);
+      msgs.forEach((x, i) => q.chatMsgIns.run(id, user.id, x.role, x.content, x.model, x.ms, now + i));
+      q.chatTouch.run(now + msgs.length, id, user.id);
+    });
+    return send(res, 200, { session: { id, title, created: now, updated: now + msgs.length } });
+  }
+  const chatSm = p.match(/^\/api\/chat\/sessions\/([^/]+)$/);
+  if (chatSm) {
+    const { user } = requireUser(req);
+    const id = decodeURIComponent(chatSm[1]);
+    if (!CHAT_ID_RE.test(id)) throw new HttpError(400, 'bad_request', 'Geçersiz sohbet.');
+    const sess = q.chatGet.get(id, user.id);
+    if (!sess) throw new HttpError(404, 'not_found', 'Sohbet bulunamadı.');
+    if (m === 'GET') {
+      const count = q.chatMsgCount.get(id, user.id).n;
+      return send(res, 200, { session: chatSessionOut({ ...sess, n: count }), messages: q.chatMsgs.all(id, user.id).map(chatMessageOut) });
+    }
+    if (m === 'DELETE') {
+      tx(() => { q.chatMsgsDel.run(id, user.id); q.chatDel.run(id, user.id); });
+      return send(res, 200, { ok: true });
+    }
+  }
   if (p === '/api/chat' && m === 'POST') {
     const { user } = requireUser(req);
     return handleChat(req, res, user);
@@ -1419,7 +1572,7 @@ async function handleApi(req, res, url) {
     const b = await readBody(req, 5000);
     await verifyUserPassword(user, b.password, ip);
     if (user.is_admin && q.adminCount.get().n <= 1) throw new HttpError(409, 'last_admin', 'Son yönetici hesabını silemezsin. Önce başka birini yönetici yap.');
-    tx(() => { q.delDocs.run(user.id); q.delUserSess.run(user.id); q.delUsage.run(user.id); q.pushDelUser.run(user.id); q.delUser.run(user.id); });
+    tx(() => { q.delDocs.run(user.id); q.chatDelUserMsgs.run(user.id); q.chatDelUser.run(user.id); q.delUserSess.run(user.id); q.delUsage.run(user.id); q.pushDelUser.run(user.id); q.delUser.run(user.id); });
     return send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
   }
 
@@ -1461,7 +1614,7 @@ async function handleApi(req, res, url) {
     return send(res, 200, { docs: rows });
   }
   if (p === '/api/docs' && m === 'DELETE') {
-    q.delDocs.run(user.id);
+    tx(() => { q.delDocs.run(user.id); q.chatDelUserMsgs.run(user.id); q.chatDelUser.run(user.id); });
     return send(res, 200, { ok: true });
   }
   const dm = p.match(/^\/api\/docs\/([^/]+)$/);
