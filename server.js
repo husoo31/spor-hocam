@@ -772,9 +772,12 @@ function chatSessionOut(s) {
     preview: s.preview ? String(s.preview).replace(/\s+/g, ' ').slice(0, 90) : '',
   };
 }
-/* Modele gönderilecek geçmiş: son 30 mesaj ve ~28 bin karakter. Eski mesajlar veritabanında kalır. */
+/* Modele gönderilecek geçmiş: son 30 mesaj ve ~14 bin karakter (ücretsiz kotaların
+   token bütçesini korumak için; AI_CHAT_CONTEXT_CHARS ile değiştirilebilir).
+   Eski mesajlar veritabanında kalır. */
+const CHAT_HISTORY_CHARS = Math.min(40000, Math.max(4000, Number(env.AI_CHAT_CONTEXT_CHARS) || 14000));
 function chatRecent(messages, maxN, maxChars) {
-  maxN = maxN || 30; maxChars = maxChars || 28000;
+  maxN = maxN || 30; maxChars = maxChars || CHAT_HISTORY_CHARS;
   const out = []; let total = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (out.length >= maxN) break;
