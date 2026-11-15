@@ -132,4 +132,10 @@ window.CHANGELOG = [
       ['fix', 'Sağlık bağlıyken geçmiş güne girilen yakılan kalori "sync" olarak saklanır; Sağlık\'tan gelmiş gibi aynı şekilde görünür ve hesaplanır, sonraki Sağlık verisi gelirse üzerine yazar.'],
       ['fix', 'Yapay zekâ kapalıyken çıkan "Yiyeceği elle girebilirsin." ipucu artık yalnızca yemek bölümünde gösteriliyor; koç yorumu, antrenman analizi ve diğer yapay zekâ yerlerinde sadece "Yapay zekâ bu sunucuda ayarlanmamış." yazıyor.']],
     commits: [['fdee500', '2026-11-08 20:45', 'Kardiyo: otomatik mesafe/kalori + AI yorumu, yiyecek ipucu yalnizca yemekte (v0.23)']] },
+  { v: 'v0.24', d: '2026-11-15 13:59', title: 'Sohbet sekmesi ve en hızlı yapay zekâ', items: [
+      ['yeni', 'Alt sekmelere 💬 Sohbet eklendi: spor, beslenme, takviye, uyku ve antrenman hakkında sohbet edilebilir. Sohbet geçmişi bu cihazda saklanır.'],
+      ['yeni', 'Kullanıcı yapay zekâ modelini seçmez. Sunucu her mesajda ölçülen yanıt süresi en kısa olan sağlıklı modeli otomatik seçer; model hata verirse sıradaki en hızlı model devralır.'],
+      ['iyi', 'Yanıtın altında hangi sağlayıcının kaç milisaniyede cevap verdiği görünür. Profil, günlük hedefler ve o günün kalori/protein özeti sohbete bağlam olarak eklenir.'],
+      ['iyi', 'Sohbet de günlük yapay zekâ hakkından bir çağrı sayılır; "Temizle" düğmesi yalnızca bu cihazdaki sohbet geçmişini siler.']],
+    commits: [] },
 ];

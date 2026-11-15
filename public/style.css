@@ -151,3 +151,28 @@ input[type=checkbox]{width:22px;height:22px}
 .syspanel .srow:first-of-type{border-top:0}
 .syspanel .srow i{width:10px;height:10px;border-radius:50%;flex:none}
 .syspanel .ms{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:600}
+
+/* sohbet sekmesi */
+.chathead p{max-width:46ch}
+.chatbox{display:flex;flex-direction:column;gap:10px;padding:2px 0 10px;min-height:120px}
+.chatstart{padding:4px 0 8px}
+.chatsug{display:flex;flex-wrap:wrap;gap:2px}
+.chatsug .chip{text-align:left;white-space:normal;line-height:1.3}
+.msg{display:flex;flex-direction:column;max-width:88%}
+.msg.user{align-self:flex-end;align-items:flex-end}
+.msg.ai{align-self:flex-start;align-items:flex-start}
+.bubble{padding:10px 13px;border-radius:16px;font-size:14.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.msg.user .bubble{background:var(--ink);color:var(--bg);border-bottom-right-radius:4px}
+.msg.ai .bubble{background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px}
+.msg.ai .bubble.err{background:color-mix(in srgb,var(--bad) 10%,var(--card));border-color:var(--bad);color:var(--ink)}
+.msgmeta{font-size:11px;color:var(--mut);margin:3px 5px 0}
+.chatinput{display:flex;gap:8px;align-items:flex-end;padding:6px 0 2px;background:var(--bg)}
+.chatinput textarea{flex:1;min-height:48px;max-height:120px;resize:none;border:1.5px solid var(--line);background:var(--card);border-radius:14px;padding:12px 14px;font-size:16px;line-height:1.35}
+.chatinput .btn{min-width:78px;padding:12px 14px;border-radius:14px}
+.typing{display:flex;gap:5px;align-items:center;min-height:20px}
+.typing span{width:6px;height:6px;border-radius:50%;background:var(--mut);display:inline-block;animation:chatdot 1s infinite}
+.typing span:nth-child(2){animation-delay:.15s}
+.typing span:nth-child(3){animation-delay:.3s}
+@keyframes chatdot{0%,60%,100%{opacity:.25;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+@media (prefers-reduced-motion:reduce){.typing span{animation:none;opacity:.55}}
+@media (max-width:359px){.tabs button{font-size:9.5px}.tabs button span{font-size:17px}}

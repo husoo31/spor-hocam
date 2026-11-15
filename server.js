@@ -527,6 +527,7 @@ const aiEnabled = () => Object.values(CHAINS).some(ch => ch.some(e => PROVIDERS[
    Hepsi dışlanmışsa yine de sırayla denenir (kurtarma fark edilsin). */
 const BREAKER = new Map();
 const FAST_MS = Number(env.AI_FAST_TIMEOUT_MS) || 35000, FAST_IMG_MS = Number(env.AI_FAST_TIMEOUT_IMG_MS) || 60000; // son çare olmayan modele tanınan azami süre
+const CHAT_TIMEOUT_MS = Number(env.AI_CHAT_TIMEOUT_MS) || 22000; // sohbette tek modele tanınan süre: kullanıcı uzun süre beklemesin
 const entryKey = e => `${e.provider}:${e.model}`;
 const breakerLeft = e => { const b = BREAKER.get(entryKey(e)); return b && b.until > Date.now() ? b.until - Date.now() : 0; };
 function breakerFail(e, err) {
@@ -540,6 +541,33 @@ function breakerFail(e, err) {
   BREAKER.set(k, b);
 }
 const breakerOk = e => BREAKER.delete(entryKey(e));
+
+/* ---- sohbet yönlendirmesi: model seçimi kullanıcıya bırakılmaz ----
+   Her başarılı cevabın gerçek yanıt süresi tutulur; sıradaki mesaj o an ölçülen süresi en kısa olan
+   sağlıklı modele gider. Hiç ölçüm yoksa sağlayıcıya göre makul bir başlangıç süresi kullanılır. */
+const SPEED = new Map(); // entryKey -> { ms, n, at }
+const CHAT_PRIOR = { gemini: 3200, groq: 2800, cerebras: 2800, mistral: 3200, openrouter: 12000, nvidia: 90000 };
+function speedScore(e, i) {
+  const s = SPEED.get(entryKey(e));
+  return s && s.n ? s.ms : (CHAT_PRIOR[e.provider] || 8000) + i * 250;
+}
+function noteSpeed(e, ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  const k = entryKey(e), s = SPEED.get(k) || { ms: 0, n: 0 };
+  s.ms = s.n ? Math.round(s.ms * 0.55 + ms * 0.45) : Math.round(ms);
+  s.n = Math.min(s.n + 1, 30);
+  s.at = Date.now();
+  SPEED.set(k, s);
+}
+function fastChatChain() {
+  const seen = new Set(), entries = [];
+  for (const ch of [CHAINS.quick, CHAINS.default, CHAINS.complex]) for (const e of ch) {
+    const k = entryKey(e);
+    if (seen.has(k) || !PROVIDERS[e.provider] || !env[KEY_ENV[e.provider]]) continue;
+    seen.add(k); entries.push(e);
+  }
+  return entries.map((e, i) => ({ e, i })).sort((a, b) => speedScore(a.e, a.i) - speedScore(b.e, b.i)).map(x => x.e);
+}
 function chainState(chain) {
   return chain.filter(e => PROVIDERS[e.provider] && env[KEY_ENV[e.provider]]).map(e => {
     const left = breakerLeft(e), b = BREAKER.get(entryKey(e));
@@ -547,19 +575,24 @@ function chainState(chain) {
   });
 }
 
-async function runChain(chain, prompt, images, wantJson, tier) {
-  const timeout = tier === 'complex' ? 120000 : 75000;
+async function runChain(chain, prompt, images, wantJson, tier, opts) {
+  opts = opts || {};
+  const timeout = opts.timeoutMs || (tier === 'complex' ? 120000 : 75000);
+  const perMs = opts.perMs || (images.length ? FAST_IMG_MS : FAST_MS);
   const usable = chain.filter(e => PROVIDERS[e.provider] && env[KEY_ENV[e.provider]] && !(images.length && !canImage(e)));
   const lastIdx = usable.length - 1;
   let last = null, jsonErr = null; // jsonErr: bir model ulaşıldı ama bozuk cevap verdi; bu, sonradan gelen bağlantı hatalarından daha bilgilendiricidir
   const attempt = async (e, isLast) => {
     // her modele kısa süre tanı (yavaş olan NVIDIA hariç): asılan bir model sıradakini ve yedek tabloyu geciktirmesin
-    const t = e.provider === 'nvidia' ? Math.max(timeout, 150000) : Math.min(timeout, images.length ? FAST_IMG_MS : FAST_MS);
+    const t = e.provider === 'nvidia' ? Math.max(timeout, 150000) : Math.min(timeout, perMs);
     try {
+      const started = performance.now();
       const text = await PROVIDERS[e.provider](e.model, prompt, images, wantJson, t);
-      if (!wantJson) { breakerOk(e); return { text, model: entryKey(e) }; }
+      const ms = Math.round(performance.now() - started);
+      if (!images.length) noteSpeed(e, ms); // sohbet yönlendirmesi metin hızına bakar; görsel çağrıları ölçümü bozmasın
+      if (!wantJson) { breakerOk(e); return { text, model: entryKey(e), ms }; }
       const parsed = extractJson(text);
-      if (parsed && typeof parsed === 'object') { breakerOk(e); return { json: parsed, model: entryKey(e) }; }
+      if (parsed && typeof parsed === 'object') { breakerOk(e); return { json: parsed, model: entryKey(e), ms }; }
       last = jsonErr = new AiErr('invalid_json', 'Cevap okunamadı.');
       console.error(`[ai] ${entryKey(e)} -> invalid_json`);
     } catch (err) {
@@ -634,6 +667,70 @@ async function handleAi(req, res, user) {
     };
     throw new HttpError(code === 'invalid_json' ? 502 : 503, code,
       msgs[code] || 'Yapay zekâ servisi şu an yanıt vermiyor (günlük kota dolmuş olabilir).');
+  }
+}
+
+/* ------------------------------------------------------------------ sohbet
+   Kullanıcı model seçmez. Gelen mesaj, o an ölçülen yanıt süresi en kısa olan sağlıklı modele gider;
+   model düşerse/hata verirse sıradaki en hızlı model devralır. Sohbet geçmişi istemcide tutulur. */
+function chatMessages(raw) {
+  if (!Array.isArray(raw) || !raw.length) throw new HttpError(400, 'bad_request', 'Mesaj boş.');
+  if (raw.length > 24) raw = raw.slice(-24);
+  const out = []; let total = 0;
+  for (const m of raw) {
+    const role = m && m.role === 'assistant' ? 'assistant' : 'user';
+    const content = m && typeof m.content === 'string' ? m.content.trim() : '';
+    if (!content) continue;
+    if (content.length > 4000) throw new HttpError(400, 'bad_request', 'Mesaj çok uzun.');
+    total += content.length;
+    if (total > 24000) throw new HttpError(400, 'bad_request', 'Sohbet çok uzun; yeni bir sohbet başlat.');
+    out.push({ role, content });
+  }
+  if (!out.length) throw new HttpError(400, 'bad_request', 'Mesaj boş.');
+  if (out[out.length - 1].role !== 'user') throw new HttpError(400, 'bad_request', 'Son mesaj kullanıcıdan olmalı.');
+  return out;
+}
+function chatPrompt(messages, context) {
+  const rules = [
+    'Sen Spor Hocam uygulamasının Türkçe spor, beslenme ve yaşam koçu asistanısın.',
+    'Kısa, net ve samimi cevap ver; gerekmedikçe 250 kelimeyi geçme.',
+    'Kullanıcıya tıbbi teşhis koyma, ilaç dozu önerme; ciddi belirtilerde uzmana yönlendir.',
+    'Emin olmadığın bilgiyi uydurma; veri eksikse bunu açıkça söyle.',
+    'Gerekirse maddeler hâlinde yaz. Markdown tablosu kullanma.',
+  ].join(' ');
+  const ctx = context ? `\nKullanıcının uygulamadaki özet bilgileri: ${context}` : '';
+  const transcript = messages.map(m => `${m.role === 'user' ? 'Kullanıcı' : 'Asistan'}: ${m.content}`).join('\n');
+  return `${rules}${ctx}\n\nSohbet geçmişi:\n${transcript}\nAsistan:`;
+}
+async function handleChat(req, res, user) {
+  const body = await readBody(req, 60000);
+  const messages = chatMessages(body.messages);
+  const context = typeof body.context === 'string' ? body.context.slice(0, 3000) : '';
+  if (!aiEnabled()) throw new HttpError(503, 'ai_disabled', 'Yapay zekâ bu sunucuda ayarlanmamış.');
+  const chain = fastChatChain();
+  if (!chain.length) throw new HttpError(503, 'ai_disabled', 'Yapay zekâ bu sunucuda ayarlanmamış.');
+
+  const day = today();
+  const mine = (q.usageGet.get(day, user.id) || { n: 0 }).n, all = q.usageSum.get(day).n;
+  const userLimit = user.ai_limit !== null && user.ai_limit !== undefined ? Number(user.ai_limit) : Number(getSetting('ai_user_limit'));
+  if (mine >= userLimit)
+    throw new HttpError(429, 'quota', userLimit === 0
+      ? 'Yapay zekâ bu hesapta kapalı.'
+      : `Bugünkü yapay zekâ hakkın doldu (${userLimit} çağrı); hak yarın yenilenir.`);
+  if (all >= Number(getSetting('ai_global_limit')))
+    throw new HttpError(429, 'quota', 'Bugünkü ortak yapay zekâ hakkı doldu; hak yarın yenilenir.');
+
+  try {
+    const out = await runChain(chain, chatPrompt(messages, context), [], false, 'quick', { timeoutMs: CHAT_TIMEOUT_MS, perMs: CHAT_TIMEOUT_MS });
+    q.usageInc.run(day, user.id);
+    return send(res, 200, { text: out.text, model: out.model, ms: out.ms || null });
+  } catch (e) {
+    const code = e.code || 'upstream_error';
+    const msgs = {
+      refused: 'Bu istek yanıtlanamadı, farklı yaz.',
+      ai_disabled: 'Yapay zekâ bu sunucuda ayarlanmamış.',
+    };
+    throw new HttpError(503, code, msgs[code] || 'Yapay zekâ servisi şu an yanıt vermiyor (günlük kota dolmuş olabilir).');
   }
 }
 
@@ -1238,6 +1335,10 @@ async function handleApi(req, res, url) {
   if (p === '/api/ai' && m === 'POST') {
     const { user } = requireUser(req);
     return handleAi(req, res, user);
+  }
+  if (p === '/api/chat' && m === 'POST') {
+    const { user } = requireUser(req);
+    return handleChat(req, res, user);
   }
 
   /* ---- oturum gerektiren yollar ---- */
