@@ -138,4 +138,13 @@ window.CHANGELOG = [
       ['iyi', 'Yanıtın altında hangi sağlayıcının kaç milisaniyede cevap verdiği görünür. Profil, günlük hedefler ve o günün kalori/protein özeti sohbete bağlam olarak eklenir.'],
       ['iyi', 'Sohbet de günlük yapay zekâ hakkından bir çağrı sayılır; "Temizle" düğmesi yalnızca bu cihazdaki sohbet geçmişini siler.']],
     commits: [['d4cafbe', '2026-11-15 14:10', 'Sohbet: otomatik en hizli yapay zeka secimi (v0.24)']] },
+  { v: 'v0.25', d: '2026-11-15 14:52', title: 'Sohbet oturumları ve model seçimi', items: [
+      ['yeni', 'Sohbetler artık veritabanında oturum olarak saklanıyor; uygulama güncellenince ya da sunucu yeniden başlayınca silinmiyor. Sol panelden geçmiş sohbetlere dönülür, satırdaki ✕ ile oturum silinir.'],
+      ['yeni', 'Sol alttaki model seçicisiyle Gemini, OpenRouter, Groq, Cerebras, Mistral ve NVIDIA modelleri seçilebilir; Auto o an ölçülen en hızlı modeli kullanır. Seçilen model hata verirse en hızlı yedek devralır.'],
+      ['yeni', 'ChatGPT benzeri yeni arayüz: solda tarihe göre gruplanan oturumlar, mobilde çekmece, animasyonlu mesajlar, yazma göstergesi ve iskelet yükleme. Yanıtın altında modelin adı ve süresi küçük yazıyla görünür.'],
+      ['iyi', '"Temizle" düğmesi kaldırıldı; yerine "Yeni sohbet" geldi. Sohbetten çıkınca yan panel kendiliğinden kapanır; mobilde ☰ ile açılır.'],
+      ['iyi', 'Model artık boy, kilo, yaş, hedef kilo, günlük kalori/makro/su hedefi, bugünkü toplamlar, son 30 günün kilo değişimi, uyku, antrenman ve sakatlık notlarını otomatik görüyor.'],
+      ['iyi', 'Eski sürümde cihazda tutulan sohbet geçmişi ilk açılışta sunucuya aktarılır; sonrasında tüm cihazlarda görünür. AI_CHAT_MODELS ile sohbet model listesi özelleştirilebilir.'],
+      ['fix', 'Sohbet sayısı 200, oturum başına mesaj 600 ve mesaj uzunluğu 4.000 karakterle sınırlandı; çok uzun sohbette yeni sohbet başlatılması istenir.']],
+    commits: [['78c8864', '2026-11-15 14:55', 'Sohbet: kalici oturumlar, model secimi ve yeni arayuz (v0.25)']] },
 ];
