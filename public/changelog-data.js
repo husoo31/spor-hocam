@@ -158,4 +158,10 @@ window.CHANGELOG = [
       ['iyi', 'Koyu temada model seçici listesindeki "beyaz üstüne gri" okunmuyor sorun düzeltildi: seçenekler artık uygulamanın kendi renkleriyle çiziliyor. Sistem açılır listeleri ve tarih kontrolleri de temaya uyuyor.'],
       ['iyi', 'Sohbette modele gönderilen geçmiş ~28.000 karakterden 14.000 karaktere indirildi; uzun sohbetlerde her mesajda yeniden giden token miktarı belirgin biçimde azalıyor. Ücretsiz kotalar için .env içindeki AI_CHAT_CONTEXT_CHARS (4.000-40.000) ile ayarlanabilir; eski mesajlar veritabanında kalmaya devam eder.']],
     commits: [['30e4426', '2026-11-15 16:41', 'Koyu temada acilir liste kontrasti ve sohbet gecmisi token butcesi (v0.27)'], ['170d3d7', '2026-11-15 17:30', 'Sohbet sekmesi tam ekran ve duyarli duzen (v0.27)']] },
+  { v: 'v0.28', d: '2026-11-15 18:32', title: 'Sohbeti yönetimden açma/kapama', items: [
+      ['yeni', 'Yönetim paneli → Sistem altına **💬 Sohbet sekmesi açık** anahtarı eklendi. Kapatınca sohbet sekmesi yönetici dahil herkesin ekranından kalkar ve asistana mesaj gönderilemez; yeniden açınca sekme ve tüm sohbetler olduğu gibi geri gelir.'],
+      ['yeni', 'Kapatma yalnızca ekranda değil sunucuda da geçerli: sohbet uçları kapatıldığında isteği "Sohbet şu anda yönetici tarafından kapatılmış" diye hemen reddeder, günlük yapay zekâ hakkından hiçbir şey harcanmaz.'],
+      ['iyi', 'Sohbet kapalıyken uygulama sunucuya hiç sohbet isteği göndermez. Anahtar veritabanına yazıldığı için sunucu yeniden başlasa bile kapalı kalır; istersen CHAT_ENABLED=false ile sunucuyu kapalı da başlatabilirsin.'],
+      ['iyi', 'Diğer yapay zekâ özellikleri —koç yorumu, takviye ve etiket okuma— sohbet kapatılsa da çalışmaya devam eder.']],
+    commits: [['113916d', '2026-11-15 18:30', 'Yonetim panelinden sohbeti acip kapatma (v0.28)']] },
 ];
